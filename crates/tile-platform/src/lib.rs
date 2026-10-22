@@ -13,7 +13,7 @@ mod tray;
 mod windows;
 
 pub use events::{WinEvent, WinEventHooks};
-pub use click_to_do::{click_to_do_available, click_to_do_disabled, set_click_to_do};
+pub use click_to_do::{click_to_do_available, click_to_do_disabled, disable_click_to_do};
 pub use hotkeys::Hotkeys;
 pub use lock::{GRANT_SCRIPT, lock_disabled, lock_workstation, set_lock_disabled};
 pub use monitors::monitors;

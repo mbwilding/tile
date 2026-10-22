@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{geometry::Direction, layout::LayoutKind};
 
-/// A Hyprland-style dispatcher. Shared by keybinds, IPC and `tilectl`.
+/// An action, written like `workspace 3`. Shared by keybinds, IPC and `tilectl`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Command {
     Exec(String),
@@ -16,7 +16,7 @@ pub enum Command {
     /// Grow (or shrink, if negative) the active window by pixels.
     ResizeActive(i32, i32),
     SwapWithMaster,
-    /// Focus the next / previous window of the workspace (Hyprland's `layoutmsg cyclenext`).
+    /// Focus the next / previous window of the workspace, in layout order.
     CycleNext,
     CyclePrev,
     ToggleSplit,

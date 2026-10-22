@@ -71,7 +71,7 @@ impl FromStr for Keybind {
 }
 
 impl Keybind {
-    /// Win+L locks the workstation below any keyboard hook; it can only be bound with
+    /// Win+L locks the workstation below any keyboard hook; binds to it only work with
     /// `general.override_win_l`.
     pub fn is_win_l(&self) -> bool {
         let m = self.modifiers;

@@ -30,14 +30,26 @@ const DEFAULT_BINDS: &[(&str, &str)] = &[
     ("super+right", "movefocus r"),
     ("super+up", "movefocus u"),
     ("super+down", "movefocus d"),
+    ("super+h", "movefocus l"),
+    ("super+j", "movefocus d"),
+    ("super+k", "movefocus u"),
+    ("super+l", "movefocus r"), // needs `override_win_l` (the default)
     ("super+shift+left", "movewindow l"),
     ("super+shift+right", "movewindow r"),
     ("super+shift+up", "movewindow u"),
     ("super+shift+down", "movewindow d"),
+    ("super+shift+h", "movewindow l"),
+    ("super+shift+j", "movewindow d"),
+    ("super+shift+k", "movewindow u"),
+    ("super+shift+l", "movewindow r"),
     ("super+alt+left", "resizeactive -40 0"),
     ("super+alt+right", "resizeactive 40 0"),
     ("super+alt+up", "resizeactive 0 -40"),
     ("super+alt+down", "resizeactive 0 40"),
+    ("super+alt+h", "resizeactive -40 0"),
+    ("super+alt+j", "resizeactive 0 40"),
+    ("super+alt+k", "resizeactive 0 -40"),
+    ("super+alt+l", "resizeactive 40 0"),
     // Win+Ctrl+Left/Right, Win+Ctrl+D and Win+Tab are left to Windows' virtual desktops.
     ("super+ctrl+shift+left", "movetodesktop prev"),
     ("super+ctrl+shift+right", "movetodesktop next"),
@@ -115,7 +127,9 @@ impl Config {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct General {
+    /// Space between neighbouring tiled windows.
     pub gaps_in: i32,
+    /// Space between tiled windows and the monitor edge.
     pub gaps_out: i32,
     pub layout: LayoutKind,
     pub borders: bool,
@@ -124,18 +138,18 @@ pub struct General {
     pub focus_new_windows: bool,
     /// Keep title bars on tiled windows.
     pub decorations: bool,
-    /// Disable Windows' Win+L lock shortcut while Tile runs, so it can be bound.
+    /// Disable Windows' Win+L lock shortcut while Tile runs (on by default), so it can be bound.
     /// Use the `lock` dispatcher to lock instead. Restored on exit, even after a crash.
     pub override_win_l: bool,
-    /// Switch off Windows' Click to Do (Copilot+ PCs) while Tile runs: holding Win would
-    /// otherwise glow around the pointer. Restored on exit, even after a crash.
+    /// Switch off Windows' Click to Do (Copilot+ PCs): holding Win would otherwise glow around
+    /// the pointer. It stays off after Tile exits; turn it back on in Settings.
     pub disable_click_to_do: bool,
 }
 
 impl Default for General {
     fn default() -> Self {
         Self {
-            gaps_in: 5,
+            gaps_in: 10,
             gaps_out: 10,
             layout: LayoutKind::Dwindle,
             borders: true,
@@ -143,7 +157,7 @@ impl Default for General {
             border_inactive: Color::rgb(0x45, 0x47, 0x5a),
             focus_new_windows: true,
             decorations: false,
-            override_win_l: false,
+            override_win_l: true,
             disable_click_to_do: true,
         }
     }
@@ -159,7 +173,7 @@ pub struct Animations {
 
 impl Default for Animations {
     fn default() -> Self {
-        Self { enabled: true, duration_ms: 150, bezier: [0.05, 0.9, 0.1, 1.0] }
+        Self { enabled: true, duration_ms: 180, bezier: [0.0, 0.75, 0.15, 1.0] }
     }
 }
 

@@ -77,7 +77,7 @@ fn resolve(target: DesktopTarget) -> Option<Desktop> {
         DesktopTarget::Next => current + 1,
         DesktopTarget::Previous => current.checked_sub(1)?,
     };
-    // Like Hyprland's workspaces, going past the last desktop creates one.
+    // Going past the last desktop creates a new one.
     if index >= count {
         return if index == count { winvd::create_desktop().ok() } else { None };
     }

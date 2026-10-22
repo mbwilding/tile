@@ -163,7 +163,7 @@ impl Direction {
     }
 }
 
-/// Finds the rectangle nearest to `from` in `dir`, Hyprland style: candidates must lie
+/// Finds the rectangle nearest to `from` in `dir`: candidates must lie
 /// beyond the source edge, overlap on the perpendicular axis is preferred, then distance.
 pub fn nearest_in_direction<T: Copy>(
     from: &Rect,

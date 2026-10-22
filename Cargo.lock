@@ -1038,10 +1038,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "dirs",
  "serde_json",
  "tile-core",
  "tile-ipc",
  "tokio",
+ "winsafe",
 ]
 
 [[package]]

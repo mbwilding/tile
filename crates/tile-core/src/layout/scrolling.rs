@@ -7,7 +7,7 @@ use crate::{
 const MIN_PROPORTION: f32 = 0.1;
 const MIN_WEIGHT: f32 = 0.1;
 
-/// mangowm "scroller" / niri style: an endless horizontal strip of columns.
+/// Scrolling: an endless horizontal strip of columns, scrolled to keep the focus in view.
 #[derive(Debug, Clone, Default)]
 pub struct Scrolling {
     columns: Vec<Column>,

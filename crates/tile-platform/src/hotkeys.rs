@@ -89,7 +89,7 @@ impl Hotkeys {
         hook.exit();
     }
 
-    /// Replaces the bind table. `always[i]` marks binds that work while paused.
+    /// Replaces the bind table. The `bool` marks binds that also work while paused.
     /// Returns a message for every bind whose key isn't recognised.
     pub fn set_binds(&self, binds: &[(Keybind, bool)]) -> Vec<String> {
         let mut errors = Vec::new();

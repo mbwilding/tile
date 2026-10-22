@@ -76,7 +76,9 @@ pub enum CenterMode {
 /// Layout tunables, derived from the user config.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LayoutSettings {
+    /// Space between neighbouring windows.
     pub gaps_in: i32,
+    /// Space between windows and the edge of the area.
     pub gaps_out: i32,
     pub dwindle_split_ratio: f32,
     pub master_mfact: f32,
@@ -90,7 +92,7 @@ pub struct LayoutSettings {
 impl Default for LayoutSettings {
     fn default() -> Self {
         Self {
-            gaps_in: 5,
+            gaps_in: 10,
             gaps_out: 10,
             dwindle_split_ratio: 0.5,
             master_mfact: 0.55,

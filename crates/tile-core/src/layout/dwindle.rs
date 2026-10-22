@@ -7,7 +7,7 @@ use crate::{
 const MIN_RATIO: f32 = 0.1;
 const MAX_RATIO: f32 = 0.9;
 
-/// Hyprland's dwindle: a binary tree where each new window splits the focused one.
+/// Dwindle: a binary tree where each new window splits the focused one.
 #[derive(Debug, Clone, Default)]
 pub struct Dwindle {
     root: Option<Node>,
