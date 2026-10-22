@@ -5,9 +5,14 @@
 
 use std::io;
 
-use interprocess::local_socket::{
-    GenericNamespaced, ListenerOptions, Name, ToNsName,
-    tokio::{Listener, Stream, prelude::*},
+pub mod launcher;
+
+use interprocess::{
+    local_socket::{
+        GenericNamespaced, ListenerOptions, Name, ToNsName,
+        tokio::{Listener, Stream, prelude::*},
+    },
+    os::windows::{local_socket::ListenerOptionsExt, security_descriptor::SecurityDescriptor},
 };
 use serde::{Deserialize, Serialize};
 use tile_core::{
@@ -84,14 +89,29 @@ pub async fn is_running() -> bool {
 pub struct Server(Listener);
 
 impl Server {
-    pub fn bind() -> io::Result<Self> {
-        ListenerOptions::new().name(socket_name()?).create_tokio().map(Self)
+    /// Creates the pipe. With `user_sid`, only that user (and SYSTEM and Administrators) can
+    /// connect, including from a normal, non-elevated process when Tile runs elevated.
+    pub fn bind(user_sid: Option<&str>) -> io::Result<Self> {
+        let mut options = ListenerOptions::new().name(socket_name()?);
+        if let Some(sid) = user_sid {
+            options = options.security_descriptor(user_only(sid)?);
+        }
+        options.create_tokio().map(Self)
     }
 
     /// Accepts connections forever, forwarding each request to `tx`.
     pub async fn serve(self, tx: mpsc::UnboundedSender<Incoming>) {
         serve(self.0, tx).await;
     }
+}
+
+/// Full access for SYSTEM, Administrators and the user `sid`. An elevated process's pipe is
+/// labelled high integrity by default, which shuts out normal processes; the medium label
+/// lets the user's non-elevated `tilectl` in.
+fn user_only(sid: &str) -> io::Result<SecurityDescriptor> {
+    let sddl = format!("D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GA;;;{sid})S:(ML;;NW;;;ME)");
+    let sddl = widestring::U16CString::from_str(sddl).map_err(io::Error::other)?;
+    SecurityDescriptor::deserialize(&sddl)
 }
 
 async fn serve(listener: Listener, tx: mpsc::UnboundedSender<Incoming>) {

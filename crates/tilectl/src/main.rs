@@ -35,6 +35,15 @@ enum Cmd {
     Install,
     /// Stop Tile and undo `install`. Your config and logs are kept.
     Uninstall,
+    /// Internal: the admin part of `install` / `uninstall`, started through UAC.
+    #[command(hide = true)]
+    Elevated {
+        /// The pipe to report the result to.
+        #[arg(long)]
+        report: String,
+        #[command(subcommand)]
+        step: install::Step,
+    },
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -113,6 +122,7 @@ async fn main() -> anyhow::Result<()> {
         Cmd::Reload => (Request::Dispatch { command: "reload".into() }, false),
         Cmd::Install => return install::install().await,
         Cmd::Uninstall => return install::uninstall().await,
+        Cmd::Elevated { report, step } => return install::elevated(step, &report).await,
     };
     let mut client = Client::send(&request).await.context("is Tile running?")?;
     let mut failed = false;

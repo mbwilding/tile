@@ -3,6 +3,7 @@
 
 mod daemon;
 mod desktops;
+mod launch;
 mod paths;
 
 use std::path::PathBuf;
@@ -24,6 +25,9 @@ struct Args {
     /// Internal: wait for the daemon with this process id to exit, then undo its changes.
     #[arg(long, hide = true)]
     watchdog: Option<u32>,
+    /// Internal: start programs for an elevated Tile, as the normal user.
+    #[arg(long, hide = true)]
+    launcher: bool,
 }
 
 /// Runs in a separate process so windows are restored even if the daemon is killed.
@@ -36,8 +40,9 @@ fn watchdog(pid: u32) {
     }
 }
 
-fn init_logging(filter: &str) -> tracing_appender::non_blocking::WorkerGuard {
-    let appender = tracing_appender::rolling::daily(paths::log_dir(), "tile.log");
+/// Logs to a daily `<name>.<date>` file in the log folder.
+fn init_logging(name: &str, filter: &str) -> tracing_appender::non_blocking::WorkerGuard {
+    let appender = tracing_appender::rolling::daily(paths::log_dir(), name);
     let (file, guard) = tracing_appender::non_blocking(appender);
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(filter));
     tracing_subscriber::registry()
@@ -54,7 +59,12 @@ fn main() -> anyhow::Result<()> {
         watchdog(pid);
         return Ok(());
     }
-    let _guard = init_logging(&args.log);
+    if args.launcher {
+        let _guard = init_logging("launcher.log", &args.log);
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
+        return runtime.block_on(launch::serve());
+    }
+    let _guard = init_logging("tile.log", &args.log);
 
     // Never leave windows hidden or without title bars, even if we crash.
     let previous = std::panic::take_hook();

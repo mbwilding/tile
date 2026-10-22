@@ -33,16 +33,25 @@ menu is suppressed), so no separate hotkey program is needed.
 
 ```powershell
 cargo build --release --workspace    # builds tile.exe and tilectl.exe
-.\target\release\tilectl install     # install for this user and start Tile
+.\target\release\tilectl install     # install and start Tile (one UAC prompt)
 ```
 
-`tilectl install` copies both programs to `%LOCALAPPDATA%\Programs\Tile`, adds that folder to
-your user `PATH` (so `tilectl` works in new terminals), starts Tile at sign-in and runs it now,
-replacing a Tile that is already running. To update after a rebuild, run `tilectl install` again
-from the checkout: the installed `tilectl` installs the build in `.\target\release`. Running
-programs never block an update, since the old files are moved aside and deleted on the next
-install. `tilectl uninstall` stops Tile and undoes all of that, keeping your config and logs.
-Neither needs admin rights.
+`tilectl install` sets Tile up to run as administrator, so it can manage admin windows too,
+without a UAC prompt at sign-in:
+
+- It copies both programs to `C:\Program Files\Tile`, where only admins can change them.
+- A scheduled task starts Tile elevated when you sign in. It runs on battery, is never stopped
+  for running too long and runs at normal priority.
+- A launcher (`tile.exe --launcher`) starts with your normal rights from your `Run` key. Programs
+  Tile starts, from `exec` binds or the tray, go through it, so they don't run as administrator.
+- `C:\Program Files\Tile` goes on your user `PATH`, for `tilectl` in terminals started after your
+  next sign-in.
+
+It replaces a running Tile and asks for admin rights once. To update after a rebuild, run
+`tilectl install` again from the checkout: the installed `tilectl` installs the build in
+`.\target\release`. Running programs never block an update, since the old files are moved aside
+and deleted on the next install. `tilectl uninstall` stops Tile and undoes all of that, keeping
+your config and logs.
 
 To try a build without installing:
 
@@ -60,7 +69,7 @@ tray icon or `tilectl dispatch exit`; Ctrl-C in the terminal only stops `cargo`.
 | `%APPDATA%\Tile\config.toml` | Config, created on first run |
 | `%LOCALAPPDATA%\Tile\logs` | Daily log files |
 | `%LOCALAPPDATA%\Tile\restore.json` | What to undo if Tile dies, while it runs |
-| `%LOCALAPPDATA%\Programs\Tile` | The installed programs |
+| `C:\Program Files\Tile` | The installed programs |
 
 ## Default keybinds
 
@@ -199,7 +208,8 @@ tilectl install / uninstall       # see "Install and run"
 ```
 
 It talks to Tile over the named pipe `\\.\pipe\tile.sock` (one JSON request per line, JSON
-responses back), which scripts can use directly.
+responses back), which scripts can use directly. Only your account (and administrators) can
+connect, including from a normal terminal when Tile runs as administrator.
 
 ## Windows integration
 
@@ -207,8 +217,9 @@ responses back), which scripts can use directly.
 the default, Tile sets the per-user `DisableLockWorkstation` policy while it runs, so Win+L can
 be bound (to `movefocus r` by default) and the `lock` dispatcher locks instead. The policy is
 removed when Tile stops, even after a crash or kill. If that policy is admin-only on your
-machine, Tile asks once through UAC to let your account manage that single registry key. With
-`override_win_l = false`, Win+L locks as usual and binds to it are skipped.
+machine and Tile doesn't run as administrator, it asks once through UAC to let your account
+manage that single registry key. With `override_win_l = false`, Win+L locks as usual and binds
+to it are skipped.
 
 **Click to Do.** On Copilot+ PCs, holding Win shows Click to Do's glow around the pointer. Tile
 switches it off once and leaves it off, because Windows shows a notice every time it is switched.
@@ -216,9 +227,9 @@ To get it back, set `disable_click_to_do = false` and turn it on in Settings, Pr
 Click to Do.
 
 **Admin windows.** A program running without admin rights can't move admin windows or see keys
-pressed in them, so Tile leaves those windows alone, and its keybinds don't work while one has
-focus. Run Tile as administrator to include them (the sign-in entry `tilectl install` creates
-runs it without admin rights).
+pressed in them. The installed Tile runs as administrator, so it manages them like any other
+window. A Tile started by hand without admin rights (e.g. `cargo run`) leaves them alone, and its
+keybinds don't work while one has focus.
 
 **Minimum sizes.** Apps that refuse a tile smaller than their minimum size are placed with
 `SWP_NOSENDCHANGING`, so they fit their tile anyway.
@@ -227,6 +238,11 @@ runs it without admin rights).
 Win+L policy. It records these in `restore.json` and undoes them on exit and on panic; a watchdog
 process (`tile.exe --watchdog <pid>`) undoes them if Tile is killed, and the next start cleans up
 anything left over.
+
+## TODO
+
+- `Win` + left-drag anywhere in a window moves it; `Win` + right-drag resizes it in the
+  direction the mouse moves, pushing the neighbouring tiles along
 
 ## Project layout
 
