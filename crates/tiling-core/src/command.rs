@@ -29,9 +29,46 @@ pub enum Command {
     ConsumeWindow(Direction),
     ExpelWindow,
     CenterColumn,
+    /// Switch native virtual desktop.
+    Desktop(DesktopTarget),
+    /// Send the active window to another native virtual desktop.
+    MoveToDesktop(DesktopTarget),
+    /// Toggle "show this window on all desktops".
+    Pin,
     Reload,
     TogglePause,
     Exit,
+}
+
+/// A native virtual desktop: zero-based index, or relative to the current one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DesktopTarget {
+    Index(u32),
+    Next,
+    Previous,
+}
+
+fn parse_desktop(name: &str, arg: Option<&str>) -> Result<DesktopTarget, ParseError> {
+    const EXPECTED: &str = "1-n|next|prev";
+    let arg = arg.ok_or_else(|| ParseError::MissingArg(name.into(), EXPECTED))?;
+    match arg.to_ascii_lowercase().as_str() {
+        "next" | "+1" | "r" => Ok(DesktopTarget::Next),
+        "prev" | "previous" | "-1" | "l" => Ok(DesktopTarget::Previous),
+        n => match n.parse::<u32>() {
+            Ok(n) if n > 0 => Ok(DesktopTarget::Index(n - 1)),
+            _ => Err(ParseError::BadArg(name.into(), arg.into(), EXPECTED)),
+        },
+    }
+}
+
+impl fmt::Display for DesktopTarget {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Index(i) => write!(f, "{}", i + 1),
+            Self::Next => f.write_str("next"),
+            Self::Previous => f.write_str("prev"),
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -124,6 +161,9 @@ impl FromStr for Command {
             "consumewindow" => Self::ConsumeWindow(parse_direction(n, rest)?),
             "expelwindow" => Self::ExpelWindow,
             "centercolumn" => Self::CenterColumn,
+            "desktop" => Self::Desktop(parse_desktop(n, rest)?),
+            "movetodesktop" => Self::MoveToDesktop(parse_desktop(n, rest)?),
+            "pin" => Self::Pin,
             "reload" => Self::Reload,
             "togglepause" => Self::TogglePause,
             "exit" => Self::Exit,
@@ -166,6 +206,9 @@ impl fmt::Display for Command {
             Self::ConsumeWindow(d) => write!(f, "consumewindow {d}"),
             Self::ExpelWindow => f.write_str("expelwindow"),
             Self::CenterColumn => f.write_str("centercolumn"),
+            Self::Desktop(t) => write!(f, "desktop {t}"),
+            Self::MoveToDesktop(t) => write!(f, "movetodesktop {t}"),
+            Self::Pin => f.write_str("pin"),
             Self::Reload => f.write_str("reload"),
             Self::TogglePause => f.write_str("togglepause"),
             Self::Exit => f.write_str("exit"),
@@ -189,6 +232,9 @@ mod tests {
             "layout scrolling",
             "scroller_proportion 0.5",
             "consumewindow r",
+            "desktop 2",
+            "movetodesktop next",
+            "pin",
         ] {
             let cmd: Command = input.parse().unwrap();
             assert_eq!(cmd.to_string(), input);

@@ -15,6 +15,9 @@ hook, including `Win` combos (the Start menu is suppressed).
 
 - Layouts per workspace: **dwindle**, **master/stack**, **monocle**, **scrolling** (niri/mangowm style columns)
 - Hyprland-style workspaces 1–9 across multiple monitors, floating, fullscreen
+- Native virtual desktop aware (via [`winvd`](https://crates.io/crates/winvd), Windows 11 24H2+):
+  every desktop has its own workspaces and layouts; Task View, `Win+Ctrl+Arrows` and
+  "show on all desktops" keep working
 - Mouse: drag a tile onto another to swap, resize a tile's edge to resize the split
 - Focus borders (Windows 11) and bezier-eased move/resize animations
 - Optional title bar removal for tiled windows (`decorations = false`, per-app override via rules)
@@ -52,7 +55,10 @@ tilingctl reload
 | `Win+Space` | cycle layout |
 | `Win+Arrows` | move focus |
 | `Win+Shift+Arrows` | move window (to the next monitor at the edge) |
-| `Win+Ctrl+Arrows` | resize |
+| `Win+Alt+Arrows` | resize |
+| `Win+Ctrl+Left/Right`, `Win+Tab` | native: switch virtual desktop, Task View |
+| `Win+Ctrl+Shift+Left/Right` | move window to previous / next virtual desktop |
+| `Win+Ctrl+P` | pin window to all desktops (it floats, untiled) |
 | `Win+1..9` / `Win+Shift+1..9` | switch to / move window to workspace |
 | `Win+,` / `Win+.` | focus monitor left / right |
 | `Win+M` / `Win+T` | swap with master / toggle dwindle split |

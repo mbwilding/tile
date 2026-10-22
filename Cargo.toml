@@ -39,7 +39,10 @@ tray-icon = "0.26"
 uiautomation = "0.25"
 win-hotkeys = "0.5"
 wineventhook = "0.11"
-winsafe = { version = "0.0.29", features = ["user", "dwm", "kernel", "gdi", "gui"] }
+# Only for the `HWND` type winvd expects; constructing it is safe.
+windows = { version = "0.58", features = ["Win32_Foundation"] }
+winsafe = { version = "0.0.29", features = ["user", "dwm", "kernel", "gdi", "gui", "ole"] }
+winvd = "0.0.49"
 
 [profile.release]
 lto = "thin"
