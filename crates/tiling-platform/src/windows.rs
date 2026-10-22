@@ -1,0 +1,413 @@
+use std::{collections::HashMap, path::Path};
+
+use tiling_config::Color;
+use tiling_core::{Rect, WindowId, WindowInfo};
+use uiautomation::{UIAutomation, patterns::UIWindowPattern, types::Handle};
+use winsafe::{self as w, co};
+
+use crate::monitors::rect;
+
+/// A window that passed the manageability checks.
+#[derive(Debug, Clone)]
+pub struct Discovered {
+    pub id: WindowId,
+    pub info: WindowInfo,
+    /// Owned dialogs and fixed-size windows should float by default.
+    pub floating_hint: bool,
+    /// The visible frame, without the invisible resize borders.
+    pub rect: Rect,
+}
+
+#[derive(Debug)]
+pub enum PlaceError {
+    /// The window no longer exists.
+    Gone,
+    /// The window belongs to an elevated process; we can't move it.
+    AccessDenied,
+    Other(w::co::ERROR),
+}
+
+/// Space between the outer window rect and the visible DWM frame (shadows / resize borders).
+#[derive(Debug, Clone, Copy, Default)]
+struct Insets {
+    left: i32,
+    top: i32,
+    right: i32,
+    bottom: i32,
+}
+
+/// Owns the handles of all managed windows and performs operations on them.
+pub struct Windows {
+    handles: HashMap<WindowId, w::HWND>,
+    insets: HashMap<WindowId, Insets>,
+    own_pid: u32,
+    automation: Option<UIAutomation>,
+}
+
+fn id_of(hwnd: &w::HWND) -> WindowId {
+    WindowId(hwnd.ptr() as isize)
+}
+
+fn has(bits: isize, flag: u32) -> bool {
+    bits & flag as isize != 0
+}
+
+fn frame_of(hwnd: &w::HWND) -> Option<Rect> {
+    match hwnd.DwmGetWindowAttribute(co::DWMWA::EXTENDED_FRAME_BOUNDS) {
+        Ok(w::DwmAttr::ExtendedFrameBounds(r)) => Some(rect(r)),
+        _ => hwnd.GetWindowRect().ok().map(rect),
+    }
+}
+
+fn is_cloaked(hwnd: &w::HWND) -> bool {
+    matches!(
+        hwnd.DwmGetWindowAttribute(co::DWMWA::CLOAKED),
+        Ok(w::DwmAttr::Cloaked(c)) if c.raw() != 0
+    )
+}
+
+fn process_name(pid: u32) -> String {
+    w::HPROCESS::OpenProcess(co::PROCESS::QUERY_LIMITED_INFORMATION, false, pid)
+        .and_then(|p| p.QueryFullProcessImageName(co::PROCESS_NAME::WIN32))
+        .ok()
+        .and_then(|path| Path::new(&path).file_name().map(|n| n.to_string_lossy().into_owned()))
+        .unwrap_or_default()
+}
+
+fn info_of(hwnd: &w::HWND) -> WindowInfo {
+    let (_, pid) = hwnd.GetWindowThreadProcessId();
+    WindowInfo {
+        title: hwnd.GetWindowText().unwrap_or_default(),
+        class: hwnd.GetClassName().unwrap_or_default(),
+        exe: process_name(pid),
+    }
+}
+
+/// Applies the manageability rules (visible, uncloaked, top-level, activatable, titled).
+fn examine(hwnd: &w::HWND, own_pid: u32) -> Option<Discovered> {
+    if !hwnd.IsWindowVisible() || hwnd.IsIconic() || is_cloaked(hwnd) {
+        return None;
+    }
+    let style = hwnd.GetWindowLongPtr(co::GWLP::STYLE);
+    let ex_style = hwnd.GetWindowLongPtr(co::GWLP::EXSTYLE);
+    if has(style, co::WS::CHILD.raw())
+        || has(ex_style, co::WS_EX::TOOLWINDOW.raw())
+        || has(ex_style, co::WS_EX::NOACTIVATE.raw())
+    {
+        return None;
+    }
+    let owned = hwnd.GetWindow(co::GW::OWNER).is_ok();
+    let caption = style & co::WS::CAPTION.raw() as isize == co::WS::CAPTION.raw() as isize;
+    if owned && !caption {
+        return None;
+    }
+    let (_, pid) = hwnd.GetWindowThreadProcessId();
+    if pid == own_pid {
+        return None;
+    }
+    let info = info_of(hwnd);
+    if info.title.is_empty() {
+        return None;
+    }
+    Some(Discovered {
+        id: id_of(hwnd),
+        info,
+        floating_hint: owned || !has(style, co::WS::THICKFRAME.raw()),
+        rect: frame_of(hwnd)?,
+    })
+}
+
+/// Last resort: share the foreground thread's input state so the focus change is allowed.
+fn focus_attached(hwnd: &w::HWND) -> bool {
+    let Some(current) = w::HWND::GetForegroundWindow() else { return false };
+    let (foreground_thread, _) = current.GetWindowThreadProcessId();
+    let own_thread = w::GetCurrentThreadId();
+    if foreground_thread == own_thread || w::AttachThreadInput(own_thread, foreground_thread, true).is_err() {
+        return false;
+    }
+    let focused = hwnd.SetForegroundWindow();
+    let _ = w::AttachThreadInput(own_thread, foreground_thread, false);
+    focused
+}
+
+/// Enumerates top-level windows, keeping the handles `keep` selects.
+fn enumerate(mut keep: impl FnMut(&w::HWND) -> bool) -> Vec<w::HWND> {
+    let mut out = Vec::new();
+    let result = w::EnumWindows(|hwnd: w::HWND| {
+        if keep(&hwnd) {
+            out.push(hwnd);
+        }
+        true
+    });
+    if let Err(e) = result {
+        tracing::warn!("EnumWindows failed: {e}");
+    }
+    out
+}
+
+impl Default for Windows {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Windows {
+    pub fn new() -> Self {
+        Self {
+            handles: HashMap::new(),
+            insets: HashMap::new(),
+            own_pid: w::GetCurrentProcessId(),
+            automation: None,
+        }
+    }
+
+    pub fn contains(&self, id: WindowId) -> bool {
+        self.handles.contains_key(&id)
+    }
+
+    /// Finds every manageable window not yet known, and takes ownership of its handle.
+    pub fn discover_all(&mut self) -> Vec<Discovered> {
+        let own_pid = self.own_pid;
+        let mut found = Vec::new();
+        for hwnd in enumerate(|h| !self.handles.contains_key(&id_of(h))) {
+            if let Some(d) = examine(&hwnd, own_pid) {
+                found.push(d);
+                self.handles.insert(id_of(&hwnd), hwnd);
+            }
+        }
+        found
+    }
+
+    /// Checks a single window reported by an event. Safe handles can only be obtained from
+    /// enumeration, so the raw value is matched against `EnumWindows`.
+    pub fn discover(&mut self, raw: isize) -> Option<Discovered> {
+        let id = WindowId(raw);
+        if self.handles.contains_key(&id) {
+            return None;
+        }
+        let hwnd = enumerate(|h| id_of(h) == id).into_iter().next()?;
+        let found = examine(&hwnd, self.own_pid)?;
+        self.handles.insert(id, hwnd);
+        Some(found)
+    }
+
+    pub fn forget(&mut self, id: WindowId) {
+        self.handles.remove(&id);
+        self.insets.remove(&id);
+    }
+
+    pub fn info(&self, id: WindowId) -> Option<WindowInfo> {
+        self.handles.get(&id).map(info_of)
+    }
+
+    pub fn frame(&self, id: WindowId) -> Option<Rect> {
+        self.handles.get(&id).and_then(frame_of)
+    }
+
+    pub fn is_alive(&self, id: WindowId) -> bool {
+        self.handles.get(&id).is_some_and(w::HWND::IsWindow)
+    }
+
+    pub fn is_minimized(&self, id: WindowId) -> bool {
+        self.handles.get(&id).is_some_and(w::HWND::IsIconic)
+    }
+
+    /// Whether the window is still visible to the user (not hidden or cloaked by its app).
+    pub fn is_visible(&self, id: WindowId) -> bool {
+        self.handles.get(&id).is_some_and(|h| h.IsWindowVisible() && !is_cloaked(h))
+    }
+
+    fn insets(&mut self, id: WindowId, hwnd: &w::HWND) -> Insets {
+        // Hidden windows report bogus frame bounds, so remember the last good measurement.
+        if hwnd.IsWindowVisible()
+            && let (Ok(outer), Some(frame)) = (hwnd.GetWindowRect(), frame_of(hwnd))
+        {
+            let measured = Insets {
+                left: frame.x - outer.left,
+                top: frame.y - outer.top,
+                right: outer.right - frame.right(),
+                bottom: outer.bottom - frame.bottom(),
+            };
+            let plausible = [measured.left, measured.top, measured.right, measured.bottom]
+                .iter()
+                .all(|v| (0..=64).contains(v));
+            if plausible {
+                self.insets.insert(id, measured);
+            }
+        }
+        self.insets.get(&id).copied().unwrap_or_default()
+    }
+
+    /// Moves a window so its visible frame covers `target`.
+    pub fn place(&mut self, id: WindowId, target: Rect) -> Result<(), PlaceError> {
+        let Some(hwnd) = self.handles.get(&id) else { return Err(PlaceError::Gone) };
+        if hwnd.IsZoomed() {
+            let _ = hwnd.ShowWindowAsync(co::SW::RESTORE);
+        }
+        let hwnd = self.handles.remove(&id).ok_or(PlaceError::Gone)?;
+        let insets = self.insets(id, &hwnd);
+        let pos = w::POINT::with(target.x - insets.left, target.y - insets.top);
+        let size = w::SIZE::with(
+            target.w + insets.left + insets.right,
+            target.h + insets.top + insets.bottom,
+        );
+        let flags = co::SWP::NOZORDER | co::SWP::NOACTIVATE | co::SWP::NOOWNERZORDER | co::SWP::ASYNCWINDOWPOS;
+        let (cx, cy) = target.center();
+        let current = hwnd.MonitorFromWindow(co::MONITOR::DEFAULTTONEAREST);
+        let destination = w::HMONITOR::MonitorFromPoint(w::POINT::with(cx, cy), co::MONITOR::DEFAULTTONEAREST);
+        let mut result = hwnd.SetWindowPos(w::HwndPlace::None, pos, size, flags);
+        if result.is_ok() && current != destination {
+            // Crossing monitors with different DPI makes apps rescale themselves; apply twice.
+            result = hwnd.SetWindowPos(w::HwndPlace::None, pos, size, flags);
+        }
+        self.handles.insert(id, hwnd);
+        result.map_err(|e| match e {
+            co::ERROR::ACCESS_DENIED => PlaceError::AccessDenied,
+            co::ERROR::INVALID_WINDOW_HANDLE => PlaceError::Gone,
+            other => PlaceError::Other(other),
+        })
+    }
+
+    pub fn show(&self, id: WindowId) {
+        if let Some(hwnd) = self.handles.get(&id) {
+            let _ = hwnd.ShowWindowAsync(co::SW::SHOWNA);
+        }
+    }
+
+    pub fn hide(&self, id: WindowId) {
+        if let Some(hwnd) = self.handles.get(&id) {
+            let _ = hwnd.ShowWindowAsync(co::SW::HIDE);
+        }
+    }
+
+    pub fn focus(&self, id: WindowId) {
+        let Some(hwnd) = self.handles.get(&id) else { return };
+        if hwnd.IsIconic() {
+            let _ = hwnd.ShowWindowAsync(co::SW::RESTORE);
+        }
+        if !hwnd.SetForegroundWindow() {
+            // Windows only lets the process that received the last input steal focus.
+            // A zero-distance mouse move makes that us, without any visible side effect.
+            let nudge = w::MOUSEINPUT { dwFlags: co::MOUSEEVENTF::MOVE, ..Default::default() };
+            let _ = w::SendInput(&[w::HwKbMouse::Mouse(nudge)]);
+            if !hwnd.SetForegroundWindow() && !focus_attached(hwnd) {
+                tracing::debug!("SetForegroundWindow refused for {id:?}");
+            }
+        }
+        let _ = hwnd.BringWindowToTop();
+    }
+
+    /// Asks the window to close, like clicking its close button.
+    pub fn close(&mut self, id: WindowId) {
+        if !self.handles.contains_key(&id) {
+            return;
+        }
+        if self.automation.is_none() {
+            match UIAutomation::new() {
+                Ok(a) => self.automation = Some(a),
+                Err(e) => {
+                    tracing::error!("UI Automation unavailable: {e}");
+                    return;
+                }
+            }
+        }
+        let Some(automation) = &self.automation else { return };
+        let result = automation
+            .element_from_handle(Handle::from(id.0))
+            .and_then(|el| el.get_pattern::<UIWindowPattern>())
+            .and_then(|pattern| pattern.close());
+        if let Err(e) = result {
+            tracing::warn!("failed to close {id:?}: {e}");
+        }
+    }
+
+    /// Shows or hides the window's title bar. Returns `false` if nothing changed
+    /// (e.g. apps that draw their own title bar have no `WS_CAPTION` to remove).
+    pub fn set_decorated(&self, id: WindowId, on: bool) -> bool {
+        self.handles.get(&id).is_some_and(|h| set_caption(h, on))
+    }
+
+    /// Sets the DWM border color (Windows 11+). `None` restores the system default.
+    pub fn set_border(&self, id: WindowId, color: Option<Color>) {
+        let Some(hwnd) = self.handles.get(&id) else { return };
+        let color = match color {
+            Some(c) => w::COLORREF::from_rgb(c.r, c.g, c.b),
+            None => w::COLORREF::from(co::CLR::NONE),
+        };
+        if let Err(e) = hwnd.DwmSetWindowAttribute(w::DwmAttr::BorderColor(color)) {
+            tracing::trace!("border color not supported: {e}");
+        }
+    }
+}
+
+/// Adds or removes the title bar (`WS_CAPTION`). Returns whether the style changed.
+fn set_caption(hwnd: &w::HWND, on: bool) -> bool {
+    let style = hwnd.style();
+    let caption = co::WS::CAPTION;
+    let has_caption = style & caption == caption;
+    if on == has_caption {
+        return false;
+    }
+    hwnd.set_style(if on { style | caption } else { style & !caption });
+    // Make Windows recompute the non-client area for the new style.
+    let flags = co::SWP::NOMOVE
+        | co::SWP::NOSIZE
+        | co::SWP::NOZORDER
+        | co::SWP::NOACTIVATE
+        | co::SWP::NOOWNERZORDER
+        | co::SWP::FRAMECHANGED
+        | co::SWP::ASYNCWINDOWPOS;
+    let _ = hwnd.SetWindowPos(w::HwndPlace::None, w::POINT::default(), w::SIZE::default(), flags);
+    true
+}
+
+/// Puts back windows a previous instance changed: re-adds title bars and re-shows hidden
+/// windows. Used on startup, from the panic hook and by the watchdog process.
+pub fn restore_windows(hidden: &[isize], undecorated: &[isize]) {
+    let matches = |h: &w::HWND| {
+        let raw = h.ptr() as isize;
+        hidden.contains(&raw) || undecorated.contains(&raw)
+    };
+    for hwnd in enumerate(matches) {
+        let raw = hwnd.ptr() as isize;
+        if undecorated.contains(&raw) {
+            set_caption(&hwnd, true);
+        }
+        if hidden.contains(&raw) && !hwnd.IsWindowVisible() {
+            let _ = hwnd.ShowWindowAsync(co::SW::SHOWNA);
+        }
+    }
+}
+
+/// Blocks until the process exits (or can no longer be observed).
+pub fn wait_for_exit(pid: u32) {
+    if let Ok(process) = w::HPROCESS::OpenProcess(co::PROCESS::SYNCHRONIZE, false, pid) {
+        let _ = process.WaitForSingleObject(None);
+    }
+}
+
+/// Whether a top-level window belongs to the shell (desktop, taskbar, Start, task view).
+/// Focus moving there shouldn't count as leaving the tiled windows.
+pub fn is_shell_window(raw: isize) -> bool {
+    const SHELL_CLASSES: [&str; 6] = [
+        "Progman",
+        "WorkerW",
+        "Shell_TrayWnd",
+        "Shell_SecondaryTrayWnd",
+        "XamlExplorerHostIslandWindow",
+        "Windows.UI.Core.CoreWindow",
+    ];
+    enumerate(|h| h.ptr() as isize == raw)
+        .first()
+        .and_then(|h| h.GetClassName().ok())
+        .is_some_and(|class| SHELL_CLASSES.contains(&class.as_str()))
+}
+
+/// The current foreground window's raw handle.
+pub fn foreground() -> Option<isize> {
+    w::HWND::GetForegroundWindow().map(|h| h.ptr() as isize)
+}
+
+pub fn cursor_pos() -> (i32, i32) {
+    w::GetCursorPos().map(|p| (p.x, p.y)).unwrap_or_default()
+}

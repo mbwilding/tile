@@ -1,0 +1,17 @@
+[package]
+name = "tilingctl"
+description = "Command-line control for the tiling window manager"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+tiling-core.workspace = true
+tiling-ipc.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true
