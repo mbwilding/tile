@@ -21,14 +21,11 @@ pub struct Restore {
     /// We disabled Win+L (the `DisableLockWorkstation` policy) to use it as a keybind.
     #[serde(default)]
     pub lock_disabled: bool,
-    /// We switched off Windows' Click to Do.
-    #[serde(default)]
-    pub click_to_do_disabled: bool,
 }
 
 impl Restore {
     pub fn is_empty(&self) -> bool {
-        self.hidden.is_empty() && self.undecorated.is_empty() && !self.lock_disabled && !self.click_to_do_disabled
+        self.hidden.is_empty() && self.undecorated.is_empty() && !self.lock_disabled
     }
 
     /// Undoes everything recorded here.
@@ -36,9 +33,6 @@ impl Restore {
         tile_platform::restore_windows(&self.hidden, &self.undecorated);
         if self.lock_disabled {
             tile_platform::set_lock_disabled(false);
-        }
-        if self.click_to_do_disabled {
-            tile_platform::set_click_to_do(true);
         }
     }
 }

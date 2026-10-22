@@ -11,7 +11,7 @@ use clap::Parser;
 use tile_config::Loaded;
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
-/// A Hyprland-style dynamic tiling window manager for Windows.
+/// A dynamic tiling window manager for Windows.
 #[derive(Parser)]
 #[command(version, about)]
 struct Args {
@@ -65,7 +65,7 @@ fn main() -> anyhow::Result<()> {
     }));
 
     let config_path = args.config.unwrap_or_else(tile_config::default_path);
-    if let Err(e) = tile_config::ensure_dir(&config_path) {
+    if let Err(e) = tile_config::ensure_exists(&config_path) {
         tracing::warn!("could not create {}: {e}", config_path.display());
     }
     let loaded = Loaded::load_or_default(&config_path).unwrap_or_else(|e| {

@@ -58,12 +58,6 @@ impl Loaded {
             .iter()
             .map(|(keys, action)| {
                 let bind = keys.parse::<Keybind>().map_err(|e| ConfigError::Bind(keys.clone(), e))?;
-                if bind.is_win_l() && !config.general.override_win_l {
-                    return Err(ConfigError::Bind(
-                        keys.clone(),
-                        "Win+L is the Windows lock shortcut; set `general.override_win_l = true` to take it over".into(),
-                    ));
-                }
                 let command = action
                     .parse::<Command>()
                     .map_err(|e| ConfigError::Bind(keys.clone(), e.to_string()))?;
@@ -80,15 +74,47 @@ impl Loaded {
     }
 }
 
-/// `%APPDATA%\Tile\config.toml`. It is optional: without it the built-in defaults apply.
+/// `%APPDATA%\Tile\config.toml`. Created on first run with every default commented out.
 pub fn default_path() -> PathBuf {
     dirs::config_dir().unwrap_or_else(|| PathBuf::from(".")).join("Tile").join("config.toml")
 }
 
-/// Creates the config's directory (not the file), so a config created later is picked up
-/// by the hot-reload watcher.
-pub fn ensure_dir(path: &Path) -> io::Result<()> {
-    path.parent().map_or(Ok(()), fs::create_dir_all)
+const TEMPLATE_HEADER: &str = "\
+# Tile config. Everything below is the built-in default, commented out.
+# Uncomment a line (and its [section] header) to override it; saved changes are applied live.
+# A [binds] or [[rules]] table replaces that whole set of defaults.
+
+";
+
+/// The built-in defaults as TOML, every line commented out so the file changes nothing until
+/// a line is uncommented.
+pub fn template() -> String {
+    let defaults = toml::to_string(&Config::default()).expect("built-in defaults serialize");
+    let mut text = String::from(TEMPLATE_HEADER);
+    for line in defaults.lines() {
+        if !line.is_empty() {
+            text.push_str("# ");
+        }
+        text.push_str(line);
+        text.push('\n');
+    }
+    text
+}
+
+/// Creates the config's directory, and the file from [`template`] if it doesn't exist yet.
+pub fn ensure_exists(path: &Path) -> io::Result<()> {
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir)?;
+    }
+    match fs::OpenOptions::new().write(true).create_new(true).open(path) {
+        // Don't leave a partial file behind: it would stop the template being written again.
+        Ok(mut file) => io::Write::write_all(&mut file, template().as_bytes()).inspect_err(|_| {
+            drop(file);
+            let _ = fs::remove_file(path);
+        }),
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Ok(()),
+        Err(e) => Err(e),
+    }
 }
 
 #[cfg(test)]
@@ -115,6 +141,17 @@ mod tests {
     }
 
     #[test]
+    fn template_is_inert_and_uncomments_to_defaults() {
+        let template = template();
+        assert_eq!(Loaded::parse(&template).unwrap().config, Config::default());
+        let uncommented: String = template[TEMPLATE_HEADER.len()..]
+            .lines()
+            .map(|l| format!("{}\n", l.strip_prefix("# ").unwrap_or(l)))
+            .collect();
+        assert_eq!(Loaded::parse(&uncommented).unwrap().config, Config::default());
+    }
+
+    #[test]
     fn partial_section_keeps_other_defaults() {
         let loaded = Loaded::parse("[general]\ngaps_in = 2\n").unwrap();
         assert_eq!(loaded.config.general.gaps_in, 2);
@@ -129,10 +166,10 @@ mod tests {
     }
 
     #[test]
-    fn win_l_needs_opt_in() {
-        let bind = "[binds]\n\"super+l\" = \"movefocus r\"\n";
-        assert!(Loaded::parse(bind).is_err());
-        assert!(Loaded::parse(&format!("[general]\noverride_win_l = true\n{bind}")).is_ok());
+    fn win_l_bind_loads_without_override() {
+        // The daemon skips it instead, so the default binds stay valid either way.
+        let config = "[general]\noverride_win_l = false\n[binds]\n\"super+l\" = \"movefocus r\"\n";
+        assert!(Loaded::parse(config).unwrap().binds[0].0.is_win_l());
     }
 
     #[test]

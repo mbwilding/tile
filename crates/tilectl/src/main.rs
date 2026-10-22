@@ -1,3 +1,5 @@
+mod install;
+
 use anyhow::{Context, bail};
 use clap::{Parser, Subcommand, ValueEnum};
 use tile_ipc::{Client, Event, Query, Request, Response};
@@ -28,6 +30,11 @@ enum Cmd {
     Subscribe,
     /// Reload the config file.
     Reload,
+    /// Install Tile for this user: copy it to %LOCALAPPDATA%\Programs\Tile, put `tilectl` on
+    /// your PATH, start Tile at sign-in and run it now. Run again after a rebuild to update.
+    Install,
+    /// Stop Tile and undo `install`. Your config and logs are kept.
+    Uninstall,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -104,6 +111,8 @@ async fn main() -> anyhow::Result<()> {
         Cmd::Query { what, json } => (Request::Query { what: what.into() }, json),
         Cmd::Subscribe => (Request::Subscribe, true),
         Cmd::Reload => (Request::Dispatch { command: "reload".into() }, false),
+        Cmd::Install => return install::install().await,
+        Cmd::Uninstall => return install::uninstall().await,
     };
     let mut client = Client::send(&request).await.context("is Tile running?")?;
     let mut failed = false;

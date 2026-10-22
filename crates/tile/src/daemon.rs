@@ -88,8 +88,6 @@ struct Daemon {
     lock_taken: bool,
     /// We already asked (UAC) for permission to manage the Win+L policy this run.
     lock_grant_requested: bool,
-    /// We switched off Windows' Click to Do (and must switch it back on).
-    click_to_do_taken: bool,
     /// After the `lock` dispatcher lifted the Win+L policy: when to re-apply it.
     relock_at: Option<Instant>,
     /// Shortly after a focus change: re-check borders apps may have repainted on activation.
@@ -178,6 +176,7 @@ fn spawn_watchdog() {
     }
 }
 
+
 /// Whether a window currently lives on a native desktop other than the visible one.
 fn on_other_desktop(raw: isize) -> bool {
     matches!((vd::desktop_of(raw), vd::current_desktop()), (Some(d), Some(c)) if d != c)
@@ -241,13 +240,12 @@ pub async fn run(config_path: PathBuf, loaded: Loaded) -> anyhow::Result<()> {
         forced: HashMap::new(),
         lock_taken: false,
         lock_grant_requested: false,
-        click_to_do_taken: false,
         relock_at: None,
         heal_at: None,
         resyncing_focus: false,
     };
     daemon.update_lock_override();
-    daemon.update_click_to_do();
+    daemon.switch_off_click_to_do();
     daemon.install_binds();
     daemon.startup();
     tracing::info!("Tile started");
@@ -373,9 +371,6 @@ impl Daemon {
         if self.lock_taken {
             tile_platform::set_lock_disabled(false);
         }
-        if self.click_to_do_taken {
-            tile_platform::set_click_to_do(true);
-        }
         paths::save_restore(&Restore::default());
         self.tray.shutdown();
     }
@@ -383,6 +378,9 @@ impl Daemon {
     fn install_binds(&mut self) {
         // Without the takeover, Windows would lock *and* run the bind.
         let win_l = self.win_l_available();
+        if !win_l && self.loaded.binds.iter().any(|(bind, _)| bind.is_win_l()) {
+            tracing::info!("Win+L binds are skipped: Windows keeps Win+L (see `general.override_win_l`)");
+        }
         let usable: Vec<_> = self.loaded.binds.iter().filter(|(bind, _)| win_l || !bind.is_win_l()).collect();
         let binds: Vec<_> = usable.iter().map(|(bind, command)| (bind.clone(), *command == Command::TogglePause)).collect();
         self.commands = usable.iter().map(|(_, c)| c.clone()).collect();
@@ -397,7 +395,7 @@ impl Daemon {
                 self.loaded = loaded;
                 self.ignored.clear();
                 self.update_lock_override();
-                self.update_click_to_do();
+                self.switch_off_click_to_do();
                 self.install_binds();
                 self.decoration_rules = self
                     .desktops
@@ -451,24 +449,16 @@ impl Daemon {
         self.persist_restore();
     }
 
-    /// Switches Click to Do off or back on to match `general.disable_click_to_do`. A switch
-    /// the user turned off themselves is left alone.
-    fn update_click_to_do(&mut self) {
-        let want_off = self.loaded.config.general.disable_click_to_do;
-        if want_off && !self.click_to_do_taken {
-            if tile_platform::click_to_do_available()
-                && !tile_platform::click_to_do_disabled()
-                && tile_platform::set_click_to_do(false)
-            {
-                self.click_to_do_taken = true;
-                tracing::info!("switched off Click to Do");
-            }
-        } else if !want_off && self.click_to_do_taken {
-            tile_platform::set_click_to_do(true);
-            self.click_to_do_taken = false;
-            tracing::info!("switched Click to Do back on");
+    /// Switches Click to Do off if `general.disable_click_to_do` asks for it. It stays off after
+    /// Tile exits: Windows pops up a notice on every flip.
+    fn switch_off_click_to_do(&self) {
+        if self.loaded.config.general.disable_click_to_do
+            && tile_platform::click_to_do_available()
+            && !tile_platform::click_to_do_disabled()
+            && tile_platform::disable_click_to_do()
+        {
+            tracing::info!("switched off Click to Do");
         }
-        self.persist_restore();
     }
 
     /// The policy key is admin-only on some machines. Ask once (one UAC prompt) for the user
@@ -860,7 +850,7 @@ impl Daemon {
         match event {
             TrayEvent::TogglePause => self.set_paused(!self.paused),
             TrayEvent::Reload => self.reload(),
-            // Without a config file, open its folder so one can be created there.
+            // If the config file couldn't be created, open its folder instead.
             TrayEvent::OpenConfig => match self.config_path.parent() {
                 Some(dir) if !self.config_path.exists() => open(dir),
                 _ => open(&self.config_path),
@@ -1112,7 +1102,6 @@ impl Daemon {
             hidden: self.desktops.hidden().into_iter().map(|id| id.0).collect(),
             undecorated: self.undecorated.iter().filter(|(_, changed)| **changed).map(|(id, _)| id.0).collect(),
             lock_disabled: self.lock_taken,
-            click_to_do_disabled: self.click_to_do_taken,
         };
         restore.hidden.sort_unstable();
         restore.undecorated.sort_unstable();
