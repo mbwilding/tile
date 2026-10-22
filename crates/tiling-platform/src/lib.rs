@@ -2,6 +2,7 @@
 //! `winsafe` for Win32/DWM, `wineventhook` for window events, `win-hotkeys` for the
 //! low-level keyboard hook, `uiautomation` for closing windows and `tray-icon` for the tray.
 
+pub mod desktops;
 mod events;
 mod hotkeys;
 mod monitors;

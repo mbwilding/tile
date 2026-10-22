@@ -8,12 +8,12 @@ use std::{
 use anyhow::{Context, bail};
 use tiling_config::Loaded;
 use tiling_core::{
-    Command, Effect, LayoutKind, ManageOptions, MonitorInfo, Rect, State, WindowId,
-    animation::lerp_rect,
+    Command, Effect, LayoutKind, ManageOptions, MonitorInfo, Rect, WindowId, animation::lerp_rect,
 };
 use tiling_ipc::{Event, Incoming, Query, Request, Response, Server};
 use tiling_platform::{
     Discovered, Hotkeys, PlaceError, Tray, TrayEvent, WinEvent, WinEventHooks, Windows, cursor_pos,
+    desktops::{self as vd, DesktopChange, DesktopId},
     foreground, is_shell_window, monitors,
 };
 use tokio::{
@@ -21,7 +21,10 @@ use tokio::{
     time::{Instant, MissedTickBehavior, interval, sleep_until},
 };
 
-use crate::paths::{self, Restore};
+use crate::{
+    desktops::Desktops,
+    paths::{self, Restore},
+};
 
 /// How long an event we caused ourselves (hide/show) may take to arrive.
 const SELF_EVENT_WINDOW: Duration = Duration::from_secs(2);
@@ -43,6 +46,7 @@ struct Published {
 
 struct Receivers {
     events: UnboundedReceiver<WinEvent>,
+    desktops: UnboundedReceiver<DesktopChange>,
     hotkeys: UnboundedReceiver<usize>,
     tray: UnboundedReceiver<TrayEvent>,
     ipc: UnboundedReceiver<Incoming>,
@@ -50,7 +54,7 @@ struct Receivers {
 }
 
 struct Daemon {
-    state: State,
+    desktops: Desktops,
     windows: Windows,
     loaded: Loaded,
     config_path: PathBuf,
@@ -150,11 +154,17 @@ fn spawn_watchdog() {
     }
 }
 
+/// Whether a window currently lives on a native desktop other than the visible one.
+fn on_other_desktop(raw: isize) -> bool {
+    matches!((vd::desktop_of(raw), vd::current_desktop()), (Some(d), Some(c)) if d != c)
+}
+
 pub async fn run(config_path: PathBuf, loaded: Loaded) -> anyhow::Result<()> {
     if tiling_ipc::is_running().await {
         bail!("tiling is already running");
     }
     let server = Server::bind().context("failed to create the IPC pipe")?;
+    let _com = vd::init_com();
 
     // Recover windows a crashed instance left hidden or undecorated.
     paths::load_restore().apply();
@@ -165,8 +175,10 @@ pub async fn run(config_path: PathBuf, loaded: Loaded) -> anyhow::Result<()> {
     let (tray_tx, tray_rx) = mpsc::unbounded_channel();
     let (ipc_tx, ipc_rx) = mpsc::unbounded_channel();
     let (config_tx, config_rx) = mpsc::unbounded_channel();
+    let (desktop_tx, desktop_rx) = mpsc::unbounded_channel();
 
     let (hooks, events) = WinEventHooks::install().await.context("failed to hook window events")?;
+    let _desktop_listener = vd::listen(desktop_tx);
     let hotkeys = Hotkeys::start(hotkey_tx);
     let tray = Tray::spawn(tray_tx);
     let _watcher = tiling_config::watch(&config_path, move || {
@@ -178,8 +190,9 @@ pub async fn run(config_path: PathBuf, loaded: Loaded) -> anyhow::Result<()> {
 
     let settings = loaded.config.layout_settings();
     let layout = loaded.config.general.layout;
+    let current = vd::current_desktop().unwrap_or_default();
     let mut daemon = Daemon {
-        state: State::new(settings, layout),
+        desktops: Desktops::new(current, settings, layout),
         windows: Windows::new(),
         loaded,
         config_path,
@@ -207,7 +220,14 @@ pub async fn run(config_path: PathBuf, loaded: Loaded) -> anyhow::Result<()> {
     tracing::info!("tiling started");
 
     daemon
-        .event_loop(Receivers { events, hotkeys: hotkeys_rx, tray: tray_rx, ipc: ipc_rx, config: config_rx })
+        .event_loop(Receivers {
+            events,
+            desktops: desktop_rx,
+            hotkeys: hotkeys_rx,
+            tray: tray_rx,
+            ipc: ipc_rx,
+            config: config_rx,
+        })
         .await;
 
     daemon.shutdown();
@@ -233,6 +253,7 @@ impl Daemon {
             };
             tokio::select! {
                 Some(event) = rx.events.recv() => self.on_event(event),
+                Some(change) = rx.desktops.recv() => self.on_desktop(change),
                 Some(index) = rx.hotkeys.recv() => {
                     if let Some(command) = self.commands.get(index).cloned() {
                         tracing::debug!("hotkey: {command}");
@@ -255,21 +276,29 @@ impl Daemon {
 
     fn startup(&mut self) {
         self.refresh_monitors();
-        for found in self.windows.discover_all() {
-            let effects = self.manage(found, false);
-            self.apply(effects);
-        }
+        self.discover_existing();
         if let Some(raw) = foreground() {
-            let effects = self.state.window_focused(WindowId(raw));
+            self.on_foreground(raw);
+        }
+    }
+
+    /// Manages every window that is visible right now, without stealing focus.
+    fn discover_existing(&mut self) {
+        for found in self.windows.discover_all() {
+            if vd::is_pinned(found.id.0) {
+                self.windows.forget(found.id);
+                continue;
+            }
+            let effects = self.manage(found, false);
             self.apply(effects);
         }
     }
 
     fn shutdown(&mut self) {
-        for id in self.state.hidden().collect::<Vec<_>>() {
+        for id in self.desktops.hidden() {
             self.windows.show(id);
         }
-        for id in self.state.managed().collect::<Vec<_>>() {
+        for id in self.desktops.managed() {
             self.windows.set_border(id, None);
         }
         for (id, changed) in std::mem::take(&mut self.undecorated) {
@@ -300,8 +329,9 @@ impl Daemon {
                 self.loaded = loaded;
                 self.ignored.clear();
                 self.install_binds();
-                let managed: Vec<_> = self.state.managed().collect();
-                self.decoration_rules = managed
+                self.decoration_rules = self
+                    .desktops
+                    .managed()
                     .into_iter()
                     .filter_map(|id| {
                         let info = self.windows.info(id)?;
@@ -309,7 +339,7 @@ impl Daemon {
                     })
                     .collect();
                 let config = &self.loaded.config;
-                let effects = self.state.set_settings(config.layout_settings(), config.general.layout);
+                let effects = self.desktops.set_settings(config.layout_settings(), config.general.layout);
                 self.repaint_borders();
                 self.apply(effects);
                 tracing::info!("config reloaded");
@@ -326,13 +356,14 @@ impl Daemon {
         if !paused {
             self.refresh_monitors();
             self.sweep();
-            for found in self.windows.discover_all() {
-                let effects = self.manage(found, false);
-                self.apply(effects);
-            }
-            let effects = self.state.sync();
+            self.discover_existing();
+            let effects = self.desktops.current().sync();
             self.apply(effects);
         }
+    }
+
+    fn focused(&self) -> Option<WindowId> {
+        self.desktops.current_ref().focused()
     }
 
     fn run_command(&mut self, command: Command) {
@@ -341,9 +372,22 @@ impl Daemon {
             Command::TogglePause => self.set_paused(!self.paused),
             Command::Exit => self.quit = true,
             Command::Exec(line) => spawn(&line),
+            Command::Desktop(target) => vd::switch_desktop(target),
             _ if self.paused => {}
+            Command::MoveToDesktop(target) => {
+                if let Some(id) = self.focused() {
+                    vd::move_to_desktop(id.0, target);
+                    self.check_desktop(id);
+                }
+            }
+            Command::Pin => {
+                if let Some(id) = self.focused() {
+                    vd::toggle_pin(id.0);
+                    self.check_desktop(id);
+                }
+            }
             command => {
-                let effects = self.state.apply(&command);
+                let effects = self.desktops.current().apply(&command);
                 self.apply(effects);
             }
         }
@@ -356,12 +400,12 @@ impl Daemon {
         }
         tracing::info!("monitors: {current:?}");
         self.monitors.clone_from(&current);
-        let effects = self.state.set_monitors(current);
+        let effects = self.desktops.set_monitors(current);
         self.apply(effects);
     }
 
-    /// Starts managing a discovered window. `opened` is false for windows that already
-    /// existed (startup / resume), which must not steal focus.
+    /// Starts managing a discovered window on the native desktop it lives on. `opened` is
+    /// false for windows that already existed (startup / resume), which must not steal focus.
     fn manage(&mut self, found: Discovered, opened: bool) -> Vec<Effect> {
         let outcome = self.loaded.rules.resolve(&found.info);
         if outcome.ignore {
@@ -376,6 +420,7 @@ impl Daemon {
         if self.loaded.config.general.borders {
             self.windows.set_border(found.id, Some(self.loaded.config.general.border_inactive));
         }
+        let desktop = vd::desktop_of(found.id.0).unwrap_or_else(|| self.desktops.current_id());
         let options = ManageOptions {
             floating: outcome.float.unwrap_or(found.floating_hint),
             workspace: outcome.workspace,
@@ -383,7 +428,7 @@ impl Daemon {
             rect: found.rect,
             focus: opened && self.loaded.config.general.focus_new_windows,
         };
-        self.state.window_opened(found.id, found.info, options)
+        self.desktops.open(desktop, found.id, found.info, options)
     }
 
     fn try_manage(&mut self, raw: isize) {
@@ -391,6 +436,11 @@ impl Daemon {
             return;
         }
         if let Some(found) = self.windows.discover(raw) {
+            // Windows shown on every desktop float above the tiling.
+            if vd::is_pinned(raw) {
+                self.windows.forget(found.id);
+                return;
+            }
             let effects = self.manage(found, true);
             self.apply(effects);
         }
@@ -398,11 +448,15 @@ impl Daemon {
 
     fn unmanage(&mut self, id: WindowId) {
         tracing::debug!("unmanaging {id:?}");
-        if self.undecorated.remove(&id) == Some(true) && self.windows.is_alive(id) {
+        let alive = self.windows.is_alive(id);
+        if self.undecorated.remove(&id) == Some(true) && alive {
             self.windows.set_decorated(id, true);
         }
+        if self.desktops.is_hidden(id) && alive {
+            self.windows.show(id);
+        }
         self.decoration_rules.remove(&id);
-        let effects = self.state.window_closed(id);
+        let effects = self.desktops.close(id);
         self.windows.forget(id);
         self.placed.remove(&id);
         self.tweens.remove(&id);
@@ -415,6 +469,92 @@ impl Daemon {
         self.apply(effects);
     }
 
+    /// Re-homes a window after it was moved to another native desktop or (un)pinned.
+    fn check_desktop(&mut self, id: WindowId) {
+        if vd::is_pinned(id.0) {
+            if self.desktops.is_managed(id) {
+                self.unmanage(id);
+            }
+            return;
+        }
+        let Some(desktop) = vd::desktop_of(id.0) else { return };
+        match self.desktops.owner(id) {
+            None => self.try_manage(id.0),
+            Some(owner) if owner != desktop => self.migrate(id, desktop),
+            Some(_) => {}
+        }
+    }
+
+    fn migrate(&mut self, id: WindowId, desktop: DesktopId) {
+        tracing::debug!("{id:?} moved to desktop {desktop:032x}");
+        let floating = self.desktops.is_floating(id);
+        if self.desktops.is_hidden(id) {
+            bump(&mut self.pending_show, id);
+            self.windows.show(id);
+        }
+        let effects = self.desktops.close(id);
+        self.apply(effects);
+        self.placed.remove(&id);
+        self.tweens.remove(&id);
+        let info = self.windows.info(id).unwrap_or_default();
+        let rect = self.windows.frame(id).unwrap_or_default();
+        let options = ManageOptions { floating, rect, ..ManageOptions::default() };
+        let effects = self.desktops.open(desktop, id, info, options);
+        self.apply(effects);
+    }
+
+    fn switch_desktop(&mut self, desktop: DesktopId) {
+        if desktop == self.desktops.current_id() {
+            return;
+        }
+        tracing::debug!("switched to desktop {desktop:032x}");
+        let effects = self.desktops.switch_to(desktop);
+        self.apply(effects);
+        // Windows on this desktop we haven't seen yet (e.g. created while it was hidden).
+        self.discover_existing();
+        if let Some(raw) = foreground() {
+            self.on_foreground(raw);
+        }
+    }
+
+    fn on_desktop(&mut self, change: DesktopChange) {
+        if self.paused {
+            return;
+        }
+        match change {
+            DesktopChange::Switched(desktop) => self.switch_desktop(desktop),
+            DesktopChange::Window(raw) => self.check_desktop(WindowId(raw)),
+            DesktopChange::Changed => {
+                // A removed desktop's windows move to its neighbour.
+                for id in self.desktops.managed() {
+                    self.check_desktop(id);
+                }
+            }
+        }
+    }
+
+    fn on_foreground(&mut self, raw: isize) {
+        let id = WindowId(raw);
+        if !self.desktops.is_managed(id) {
+            self.try_manage(raw);
+            if !self.desktops.is_managed(id) {
+                if !is_shell_window(raw) {
+                    let effects = self.desktops.current().window_focused(id);
+                    self.apply(effects);
+                }
+                return;
+            }
+        }
+        // Focus can arrive before the desktop switch notification.
+        if self.desktops.owner(id) != Some(self.desktops.current_id())
+            && let Some(live) = vd::current_desktop()
+        {
+            self.switch_desktop(live);
+        }
+        let effects = self.desktops.with_owner(id, |s| s.window_focused(id));
+        self.apply(effects);
+    }
+
     fn on_event(&mut self, event: WinEvent) {
         if self.paused {
             return;
@@ -422,47 +562,48 @@ impl Daemon {
         match event {
             WinEvent::Show(raw) | WinEvent::Uncloaked(raw) => {
                 let id = WindowId(raw);
-                if !self.state.is_managed(id) {
+                if !self.desktops.is_managed(id) {
                     self.try_manage(raw);
-                } else if !consume(&mut self.pending_show, id) && self.state.is_hidden(id) {
+                } else if !consume(&mut self.pending_show, id)
+                    && self.desktops.is_hidden(id)
+                    && self.desktops.owner(id) == Some(self.desktops.current_id())
+                {
                     // The app re-showed a window we hid: follow it to its workspace.
-                    let effects = self.state.window_focused(id);
+                    let effects = self.desktops.with_owner(id, |s| s.window_focused(id));
                     self.apply(effects);
                 }
             }
             WinEvent::Hide(raw) | WinEvent::Cloaked(raw) => {
                 let id = WindowId(raw);
-                if self.state.is_managed(id)
+                if self.desktops.is_managed(id)
                     && !consume(&mut self.pending_hide, id)
                     && !self.windows.is_visible(id)
                 {
-                    self.unmanage(id);
+                    // The shell cloaks windows on other desktops: keep managing those.
+                    if on_other_desktop(raw) {
+                        self.check_desktop(id);
+                    } else {
+                        self.unmanage(id);
+                    }
                 }
             }
             WinEvent::Destroy(raw) => {
                 let id = WindowId(raw);
                 self.ignored.remove(&id);
-                if self.state.is_managed(id) {
+                if self.desktops.is_managed(id) {
                     self.unmanage(id);
                 }
             }
-            WinEvent::Foreground(raw) => {
-                if !self.state.is_managed(WindowId(raw)) {
-                    self.try_manage(raw);
-                    if !self.state.is_managed(WindowId(raw)) && is_shell_window(raw) {
-                        return;
-                    }
-                }
-                let effects = self.state.window_focused(WindowId(raw));
-                self.apply(effects);
-            }
+            WinEvent::Foreground(raw) => self.on_foreground(raw),
             WinEvent::MinimizeStart(raw) => {
-                let effects = self.state.window_minimized(WindowId(raw));
+                let id = WindowId(raw);
+                let effects = self.desktops.with_owner(id, |s| s.window_minimized(id));
                 self.apply(effects);
             }
             WinEvent::MinimizeEnd(raw) => {
-                if self.state.is_managed(WindowId(raw)) {
-                    let effects = self.state.window_restored(WindowId(raw));
+                let id = WindowId(raw);
+                if self.desktops.is_managed(id) {
+                    let effects = self.desktops.with_owner(id, |s| s.window_restored(id));
                     self.apply(effects);
                 } else {
                     self.try_manage(raw);
@@ -470,7 +611,7 @@ impl Daemon {
             }
             WinEvent::MoveSizeStart(raw) => {
                 let id = WindowId(raw);
-                if self.state.is_managed(id) {
+                if self.desktops.is_managed(id) {
                     self.moving.insert(id);
                     self.tweens.remove(&id);
                 }
@@ -480,18 +621,19 @@ impl Daemon {
                 if self.moving.remove(&id) {
                     self.placed.remove(&id);
                     if let Some(rect) = self.windows.frame(id) {
-                        let effects = self.state.window_moved(id, rect, cursor_pos());
+                        let cursor = cursor_pos();
+                        let effects = self.desktops.with_owner(id, |s| s.window_moved(id, rect, cursor));
                         self.apply(effects);
                     }
                 }
             }
             WinEvent::NameChange(raw) => {
                 let id = WindowId(raw);
-                if self.state.is_managed(id) {
-                    if self.state.focused() == Some(id)
+                if self.desktops.is_managed(id) {
+                    if self.focused() == Some(id)
                         && let Some(info) = self.windows.info(id)
                     {
-                        self.state.set_info(id, info);
+                        self.desktops.current().set_info(id, info);
                         self.publish();
                     }
                 } else if foreground() == Some(raw) {
@@ -524,12 +666,15 @@ impl Daemon {
                 }
                 Err(e) => Response::Error { message: e.to_string() },
             },
-            Request::Query { what } => match what {
-                Query::Monitors => Response::Monitors { monitors: self.state.snapshot_monitors() },
-                Query::Workspaces => Response::Workspaces { workspaces: self.state.snapshot_workspaces() },
-                Query::Windows => Response::Windows { windows: self.state.snapshot_windows() },
-                Query::ActiveWindow => Response::ActiveWindow { window: self.state.snapshot_active_window() },
-            },
+            Request::Query { what } => {
+                let state = self.desktops.current_ref();
+                match what {
+                    Query::Monitors => Response::Monitors { monitors: state.snapshot_monitors() },
+                    Query::Workspaces => Response::Workspaces { workspaces: state.snapshot_workspaces() },
+                    Query::Windows => Response::Windows { windows: state.snapshot_windows() },
+                    Query::ActiveWindow => Response::ActiveWindow { window: state.snapshot_active_window() },
+                }
+            }
             Request::Subscribe => {
                 for event in self.current_events() {
                     let _ = reply.send(Response::Event { event });
@@ -583,13 +728,12 @@ impl Daemon {
         self.decoration_rules
             .get(&id)
             .copied()
-            .unwrap_or_else(|| self.loaded.config.general.decorations || self.state.is_floating(id))
+            .unwrap_or_else(|| self.loaded.config.general.decorations || self.desktops.is_floating(id))
     }
 
     /// Adds or removes title bars so every managed window matches the config.
     fn update_decorations(&mut self) {
-        let managed: Vec<_> = self.state.managed().collect();
-        for id in managed {
+        for id in self.desktops.managed() {
             let want = self.wants_decorations(id);
             match (want, self.undecorated.get(&id).copied()) {
                 (false, None) => {
@@ -618,7 +762,8 @@ impl Daemon {
         let animations = &self.loaded.config.animations;
         if animations.enabled
             && may_animate
-            && !self.state.is_hidden(id)
+            && !self.desktops.is_hidden(id)
+            && self.desktops.owner(id) == Some(self.desktops.current_id())
             && let Some(previous) = previous
         {
             let from = self.tweens.get(&id).map_or(previous, |t| t.current);
@@ -671,7 +816,12 @@ impl Daemon {
 
     /// Drops windows that disappeared without us noticing.
     fn sweep(&mut self) {
-        let dead: Vec<_> = self.state.managed().filter(|id| !self.windows.is_alive(*id)).collect();
+        let dead: Vec<_> = self
+            .desktops
+            .managed()
+            .into_iter()
+            .filter(|id| !self.windows.is_alive(*id))
+            .collect();
         for id in dead {
             self.unmanage(id);
         }
@@ -682,7 +832,7 @@ impl Daemon {
         if !general.borders {
             return;
         }
-        let focused = self.state.focused();
+        let focused = self.desktops.current_ref().focused();
         if focused == self.bordered {
             return;
         }
@@ -698,7 +848,7 @@ impl Daemon {
     fn repaint_borders(&mut self) {
         let general = &self.loaded.config.general;
         let color = general.borders.then_some(general.border_inactive);
-        for id in self.state.managed().collect::<Vec<_>>() {
+        for id in self.desktops.managed() {
             self.windows.set_border(id, color);
         }
         self.bordered = None;
@@ -707,7 +857,7 @@ impl Daemon {
     /// Records what must be undone if we die, for the panic hook and the watchdog.
     fn persist_restore(&mut self) {
         let mut restore = Restore {
-            hidden: self.state.hidden().map(|id| id.0).collect(),
+            hidden: self.desktops.hidden().into_iter().map(|id| id.0).collect(),
             undecorated: self.undecorated.iter().filter(|(_, changed)| **changed).map(|(id, _)| id.0).collect(),
         };
         restore.hidden.sort_unstable();
@@ -719,10 +869,11 @@ impl Daemon {
     }
 
     fn snapshot(&self) -> Published {
+        let state = self.desktops.current_ref();
         Published {
-            workspace: self.state.focused_workspace(),
-            window: self.state.snapshot_active_window().map(|w| (w.id, w.title, w.exe)),
-            layout: self.state.active_layout(),
+            workspace: state.focused_workspace(),
+            window: state.snapshot_active_window().map(|w| (w.id, w.title, w.exe)),
+            layout: state.active_layout(),
         }
     }
 

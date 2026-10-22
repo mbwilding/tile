@@ -59,10 +59,16 @@ center_focused = "on_overflow"
 "super+shift+up" = "movewindow u"
 "super+shift+down" = "movewindow d"
 
-"super+ctrl+left" = "resizeactive -40 0"
-"super+ctrl+right" = "resizeactive 40 0"
-"super+ctrl+up" = "resizeactive 0 -40"
-"super+ctrl+down" = "resizeactive 0 40"
+"super+alt+left" = "resizeactive -40 0"
+"super+alt+right" = "resizeactive 40 0"
+"super+alt+up" = "resizeactive 0 -40"
+"super+alt+down" = "resizeactive 0 40"
+
+# Native virtual desktops. Win+Ctrl+Left/Right, Win+Ctrl+D and Win+Tab are left to Windows;
+# each desktop has its own set of tiling workspaces.
+"super+ctrl+shift+left" = "movetodesktop prev"
+"super+ctrl+shift+right" = "movetodesktop next"
+"super+ctrl+p" = "pin"
 
 "super+comma" = "focusmonitor l"
 "super+period" = "focusmonitor r"

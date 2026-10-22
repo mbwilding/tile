@@ -606,7 +606,12 @@ impl State {
             | Command::ExpelWindow
             | Command::CenterColumn => self.layout_specific(command),
             // Handled by the daemon.
-            Command::Reload | Command::TogglePause | Command::Exit => Vec::new(),
+            Command::Desktop(_)
+            | Command::MoveToDesktop(_)
+            | Command::Pin
+            | Command::Reload
+            | Command::TogglePause
+            | Command::Exit => Vec::new(),
         }
     }
 
