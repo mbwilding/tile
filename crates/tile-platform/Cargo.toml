@@ -1,0 +1,22 @@
+[package]
+name = "tile-platform"
+description = "Safe Win32 integration for the tiling window manager"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+tile-core.workspace = true
+tile-config.workspace = true
+tokio = { workspace = true, features = ["rt", "sync"] }
+tracing.workspace = true
+tray-icon.workspace = true
+uiautomation.workspace = true
+win-hotkeys.workspace = true
+windows.workspace = true
+wineventhook.workspace = true
+winsafe.workspace = true
+winvd.workspace = true
+
+[lints]
+workspace = true

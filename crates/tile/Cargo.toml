@@ -1,0 +1,27 @@
+[package]
+name = "tile"
+description = "A Hyprland-style dynamic tiling window manager for Windows"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+tile-core.workspace = true
+tile-config.workspace = true
+tile-ipc.workspace = true
+tile-platform.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+dirs.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["rt", "macros", "sync", "time", "signal"] }
+tracing.workspace = true
+tracing-appender.workspace = true
+tracing-subscriber.workspace = true
+
+[build-dependencies]
+embed-manifest = { version = "1.5", default-features = false }
+
+[lints]
+workspace = true
