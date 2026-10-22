@@ -1,7 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
     os::windows::process::CommandExt,
-    path::{Path, PathBuf},
+    path::PathBuf,
     time::Duration,
 };
 
@@ -23,6 +23,7 @@ use tokio::{
 
 use crate::{
     desktops::Desktops,
+    launch,
     paths::{self, Restore},
 };
 
@@ -129,22 +130,6 @@ fn consume(map: &mut HashMap<WindowId, (u32, Instant)>, id: WindowId) -> bool {
     }
 }
 
-/// Runs a command line through `start`, detached and without a console window.
-fn spawn(command_line: &str) {
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    let result = std::process::Command::new("cmd")
-        .raw_arg(format!("/C start \"\" {command_line}"))
-        .creation_flags(CREATE_NO_WINDOW)
-        .spawn();
-    if let Err(e) = result {
-        tracing::error!("failed to run `{command_line}`: {e}");
-    }
-}
-
-fn open(path: &Path) {
-    spawn(&format!("\"{}\"", path.display()));
-}
-
 /// Starts `tile --watchdog <pid>`: a detached process that undoes our window changes
 /// when this process exits for any reason, including being killed.
 fn spawn_watchdog() {
@@ -186,7 +171,7 @@ pub async fn run(config_path: PathBuf, loaded: Loaded) -> anyhow::Result<()> {
     if tile_ipc::is_running().await {
         bail!("Tile is already running");
     }
-    let server = Server::bind().context("failed to create the IPC pipe")?;
+    let server = Server::bind(tile_platform::user_sid().as_deref()).context("failed to create the IPC pipe")?;
     let _com = vd::init_com();
 
     // Recover windows a crashed instance left hidden or undecorated.
@@ -518,7 +503,7 @@ impl Daemon {
             Command::Reload => self.reload(),
             Command::TogglePause => self.set_paused(!self.paused),
             Command::Exit => self.quit = true,
-            Command::Exec(line) => spawn(&line),
+            Command::Exec(line) => launch::exec(&line),
             Command::Desktop(target) => vd::switch_desktop(target),
             Command::Lock => self.lock(),
             _ if self.paused => {}
@@ -852,10 +837,10 @@ impl Daemon {
             TrayEvent::Reload => self.reload(),
             // If the config file couldn't be created, open its folder instead.
             TrayEvent::OpenConfig => match self.config_path.parent() {
-                Some(dir) if !self.config_path.exists() => open(dir),
-                _ => open(&self.config_path),
+                Some(dir) if !self.config_path.exists() => launch::open(dir),
+                _ => launch::open(&self.config_path),
             },
-            TrayEvent::OpenLogs => open(&paths::log_dir()),
+            TrayEvent::OpenLogs => launch::open(&paths::log_dir()),
             TrayEvent::Quit => self.quit = true,
             TrayEvent::DisplayChanged => self.refresh_monitors(),
         }
@@ -922,7 +907,7 @@ impl Daemon {
                     }
                 }
                 Effect::Close(id) => self.windows.close(id),
-                Effect::Exec(line) => spawn(&line),
+                Effect::Exec(line) => launch::exec(&line),
             }
         }
         for id in failed {
