@@ -22,7 +22,7 @@ use tokio::{
 
 use crate::{
     desktops::Desktops,
-    launch,
+    launch, logging,
     paths::{self, Restore},
     remap::{self, Notice, Remap},
 };
@@ -66,7 +66,10 @@ struct Daemon {
     commands: Vec<Command>,
     hotkeys: Hotkeys,
     tray: Tray,
+    /// The window manager is paused (tray "Tile").
     paused: bool,
+    /// The key remapper is paused (tray "Key").
+    remap_paused: bool,
     quit: bool,
     /// The window manager is on (`general.tiling`).
     tiling: bool,
@@ -228,6 +231,7 @@ pub async fn run(config_path: PathBuf, loaded: Loaded) -> anyhow::Result<()> {
         hotkeys,
         tray,
         paused: false,
+        remap_paused: false,
         quit: false,
         tiling: false,
         remap: None,
@@ -259,6 +263,7 @@ pub async fn run(config_path: PathBuf, loaded: Loaded) -> anyhow::Result<()> {
     }
     daemon.update_remap();
     daemon.update_cursor();
+    daemon.tray.set_logging(logging::enabled());
     tracing::info!("Tile started");
 
     daemon
@@ -466,7 +471,7 @@ impl Daemon {
             remap.send(remap::Command::Load(config));
             return;
         }
-        match Remap::start(config, self.paused, self.remap_notices.clone()) {
+        match Remap::start(config, self.remap_paused, self.remap_notices.clone()) {
             Ok(remap) => {
                 self.remap = Some(remap);
                 if !tile_platform::is_elevated() {
@@ -563,15 +568,30 @@ impl Daemon {
         self.apply(effects);
     }
 
-    fn set_paused(&mut self, paused: bool) {
-        self.paused = paused;
-        self.hotkeys.set_paused(paused);
-        self.tray.set_paused(paused);
+    /// `togglepause`: pauses the window manager and the remapper, or resumes both if both are
+    /// paused.
+    fn toggle_pause(&mut self) {
+        let pause = !(self.paused && self.remap_paused);
+        self.set_remap_paused(pause);
+        self.set_paused(pause);
+    }
+
+    fn set_remap_paused(&mut self, paused: bool) {
+        self.remap_paused = paused;
+        self.tray.set_key_paused(paused);
         if let Some(remap) = &self.remap {
             remap.send(remap::Command::Pause(paused));
         }
+        tracing::info!("remapping {}", if paused { "paused" } else { "resumed" });
+    }
+
+    /// Pauses or resumes the window manager (binds, except `togglepause`, included).
+    fn set_paused(&mut self, paused: bool) {
+        self.paused = paused;
+        self.hotkeys.set_paused(paused);
+        self.tray.set_tile_paused(paused);
         self.update_cursor();
-        tracing::info!("Tile {}", if paused { "paused" } else { "resumed" });
+        tracing::info!("tiling {}", if paused { "paused" } else { "resumed" });
         if !paused && self.tiling {
             self.refresh_monitors();
             self.sweep();
@@ -674,7 +694,7 @@ impl Daemon {
     fn run_command(&mut self, command: Command) {
         match command {
             Command::Reload => self.reload(),
-            Command::TogglePause => self.set_paused(!self.paused),
+            Command::TogglePause => self.toggle_pause(),
             Command::Exit => self.quit = true,
             Command::Exec(line) => launch::exec(&line),
             Command::Desktop(target) => vd::switch_desktop(target),
@@ -1088,14 +1108,23 @@ impl Daemon {
 
     fn on_tray(&mut self, event: TrayEvent) {
         match event {
-            TrayEvent::TogglePause => self.set_paused(!self.paused),
+            TrayEvent::ToggleTile => self.set_paused(!self.paused),
+            TrayEvent::ToggleKey => self.set_remap_paused(!self.remap_paused),
+            TrayEvent::ToggleLogging => {
+                logging::set_enabled(!logging::enabled());
+                self.tray.set_logging(logging::enabled());
+            }
             TrayEvent::Reload => self.reload(),
             // If the config file couldn't be created, open its folder instead.
             TrayEvent::OpenConfig => match self.config_path.parent() {
                 Some(dir) if !self.config_path.exists() => launch::open(dir),
                 _ => launch::open(&self.config_path),
             },
-            TrayEvent::OpenLogs => launch::open(&paths::log_dir()),
+            TrayEvent::OpenLogs => {
+                // Nothing may have been logged yet.
+                let _ = std::fs::create_dir_all(paths::log_dir());
+                launch::open(&paths::log_dir());
+            }
             TrayEvent::Quit => self.quit = true,
             TrayEvent::DisplayChanged if self.tiling => self.refresh_monitors(),
             TrayEvent::DisplayChanged => {}
