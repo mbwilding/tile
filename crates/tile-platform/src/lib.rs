@@ -1,6 +1,6 @@
-//! Windows integration for Tile, built entirely on safe wrappers:
-//! `winsafe` for Win32/DWM, `wineventhook` for window events, `win-hotkeys` for the
-//! low-level keyboard hook, `uiautomation` for closing windows and `tray-icon` for the tray.
+//! Windows integration for Tile, built on safe wrappers:
+//! `winsafe` for Win32/DWM, `wineventhook` for window events, `tile-hook` for the
+//! low-level keyboard hooks, `uiautomation` for closing windows and `tray-icon` for the tray.
 
 mod click_to_do;
 pub mod desktops;

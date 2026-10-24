@@ -12,6 +12,7 @@ pub struct Config {
     pub dwindle: Dwindle,
     pub master: Master,
     pub scrolling: Scrolling,
+    pub remap: Remap,
     /// `"super+shift+q" = "killactive"`.
     pub binds: BTreeMap<String, String>,
     pub rules: Vec<Rule>,
@@ -111,6 +112,7 @@ impl Default for Config {
             dwindle: Dwindle::default(),
             master: Master::default(),
             scrolling: Scrolling::default(),
+            remap: Remap::default(),
             binds: default_binds(),
             rules: default_rules(),
         }
@@ -136,6 +138,10 @@ impl Config {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct General {
+    /// Manage windows: layouts, `[binds]` and `[[rules]]`. Off, Tile leaves windows alone.
+    pub tiling: bool,
+    /// Remap keys with the `[remap]` layers.
+    pub remap: bool,
     /// Space between neighbouring tiled windows.
     pub gaps_in: i32,
     /// Space between tiled windows and the monitor edge.
@@ -158,6 +164,8 @@ pub struct General {
 impl Default for General {
     fn default() -> Self {
         Self {
+            tiling: true,
+            remap: true,
             gaps_in: 10,
             gaps_out: 10,
             layout: LayoutKind::Dwindle,
@@ -241,6 +249,106 @@ impl Default for Scrolling {
             proportion: 0.5,
             proportion_presets: vec![0.333, 0.5, 0.667, 1.0],
             center_focused: CenterMode::OnOverflow,
+        }
+    }
+}
+
+/// Key remapping, keyd style. Each `layers` entry is a layer named as a keyd section header:
+/// `main`, `name`, `name:C` (a layer whose unbound keys get Control) or `a+b` (while both
+/// are active). Its table maps keys to actions, e.g. `capslock = "overload(nav, esc)"`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Remap {
+    /// Tap a dummy key before a layer's lone Alt or Win is released, so it doesn't open a menu
+    /// or Start (keyd's modifier guard).
+    pub modifier_guard: bool,
+    pub layers: BTreeMap<String, BTreeMap<String, String>>,
+}
+
+/// Remapping layers used when the config has no `[remap.layers]`: nona's keyd setup (the
+/// `keyd-dvorak` module in the nix repo), so the keyboard behaves the same on Linux. Its
+/// `rightalt = layer(symbols)` waits for a port of the `symbols` layer.
+const DEFAULT_LAYERS: &[(&str, &[(&str, &str)])] = &[
+    (
+        "main",
+        &[
+            ("backspace", "noop"),
+            ("space", "overload(shift, space)"),
+            ("capslock", "overload(capslock, backspace)"),
+            ("leftshift", "esc"),
+            ("a", "overloadt(control, a, 200)"),
+            (";", "overloadt(control, ;, 200)"),
+            ("s", "overloadt(meta, s, 200)"),
+            ("l", "overloadt(meta, l, 200)"),
+            ("z", "overloadt(alt, z, 200)"),
+            ("/", "overloadt(alt, /, 200)"),
+            ("f", "overloadt(numbers, f, 200)"),
+            ("m", "overloadt(fkeys, m, 200)"),
+        ],
+    ),
+    // With the Windows Dvorak layout, j c v p are Dvorak's h j k l.
+    (
+        "capslock:C",
+        &[("j", "left"), ("c", "down"), ("v", "up"), ("p", "right")],
+    ),
+    (
+        "capslock+shift",
+        &[
+            ("j", "C-left"),
+            ("c", "C-down"),
+            ("v", "C-up"),
+            ("p", "C-right"),
+        ],
+    ),
+    (
+        "numbers",
+        &[
+            (";", "0"),
+            ("m", "1"),
+            (",", "2"),
+            (".", "3"),
+            ("j", "4"),
+            ("k", "5"),
+            ("l", "6"),
+            ("u", "7"),
+            ("i", "8"),
+            ("o", "9"),
+        ],
+    ),
+    (
+        "fkeys",
+        &[
+            ("q", "f1"),
+            ("w", "f2"),
+            ("e", "f3"),
+            ("r", "f4"),
+            ("a", "f5"),
+            ("s", "f6"),
+            ("d", "f7"),
+            ("f", "f8"),
+            ("z", "f9"),
+            ("x", "f10"),
+            ("c", "f11"),
+            ("v", "f12"),
+        ],
+    ),
+];
+
+impl Default for Remap {
+    fn default() -> Self {
+        let layers = DEFAULT_LAYERS
+            .iter()
+            .map(|(name, binds)| {
+                let binds = binds
+                    .iter()
+                    .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+                    .collect();
+                ((*name).to_string(), binds)
+            })
+            .collect();
+        Self {
+            modifier_guard: true,
+            layers,
         }
     }
 }

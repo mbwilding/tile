@@ -974,8 +974,10 @@ dependencies = [
  "serde_json",
  "tile-config",
  "tile-core",
+ "tile-hook",
  "tile-ipc",
  "tile-platform",
+ "tile-remap",
  "tokio",
  "tracing",
  "tracing-appender",
@@ -992,6 +994,7 @@ dependencies = [
  "serde",
  "thiserror",
  "tile-core",
+ "tile-remap",
  "toml",
 ]
 
@@ -1001,6 +1004,13 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "thiserror",
+]
+
+[[package]]
+name = "tile-hook"
+version = "0.1.0"
+dependencies = [
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1022,6 +1032,7 @@ version = "0.1.0"
 dependencies = [
  "tile-config",
  "tile-core",
+ "tile-hook",
  "tokio",
  "tracing",
  "tray-icon",
@@ -1034,6 +1045,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "tile-remap"
+version = "0.1.0"
+
+[[package]]
 name = "tilectl"
 version = "0.1.0"
 dependencies = [
@@ -1042,6 +1057,7 @@ dependencies = [
  "dirs",
  "interprocess",
  "serde_json",
+ "tile-config",
  "tile-core",
  "tile-ipc",
  "tokio",

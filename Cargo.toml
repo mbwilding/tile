@@ -11,6 +11,7 @@ license = "MIT"
 authors = ["Matthew Wilding <mbwilding@gmail.com>"]
 repository = "https://github.com/mbwilding/tiling"
 
+# `tile-hook` is the one crate that opts out of these (it holds all the `unsafe`).
 [workspace.lints.rust]
 unsafe_code = "forbid"
 
@@ -21,9 +22,11 @@ all = { level = "warn", priority = -1 }
 # (tokio features are chosen per crate).
 [workspace.dependencies]
 tile-core = { path = "crates/tile-core" }
+tile-hook = { path = "crates/tile-hook" }
 tile-config = { path = "crates/tile-config" }
 tile-ipc = { path = "crates/tile-ipc" }
 tile-platform = { path = "crates/tile-platform" }
+tile-remap = { path = "crates/tile-remap" }
 
 anyhow = "1.0"
 clap = { version = "4.6", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
@@ -48,6 +51,7 @@ wineventhook = { version = "0.11", default-features = false }
 # Pinned to the version winvd uses, only for its `HWND` type (constructing it is safe).
 windows = { version = "0.58", default-features = false, features = ["Win32_Foundation"] }
 winsafe = { version = "0.0.29", default-features = false, features = ["user", "dwm", "kernel", "gdi", "gui", "ole", "advapi"] }
+windows-sys = { version = "0.61", default-features = false }
 winvd = { version = "0.0.49", default-features = false }
 
 # Our crates build unoptimized for fast iteration; dependencies are optimized once and cached.

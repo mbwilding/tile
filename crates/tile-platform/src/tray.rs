@@ -25,6 +25,8 @@ pub enum TrayEvent {
     Quit,
     /// Monitors or the work area changed.
     DisplayChanged,
+    /// The session was locked, unlocked or switched.
+    SessionChanged,
 }
 
 const POLL_TIMER: usize = 1;
@@ -148,17 +150,28 @@ fn run(
                 Ok(built) => *state.borrow_mut() = Some(built),
                 Err(e) => tracing::error!("failed to create tray icon: {e}"),
             }
+            if !tile_hook::watch_sessions(wnd.hwnd().ptr() as isize) {
+                tracing::warn!(
+                    "can't watch for the session locking; remapped keys may stick after unlocking"
+                );
+            }
             wnd.hwnd().SetTimer(POLL_TIMER, 100, None)?;
             Ok(0)
         }
     });
 
     wnd.on().wm_timer(POLL_TIMER, {
-        let (state, tx, shutdown, paused) =
-            (state.clone(), tx.clone(), shutdown.clone(), paused.clone());
+        let (wnd, state, tx, shutdown, paused) = (
+            wnd.clone(),
+            state.clone(),
+            tx.clone(),
+            shutdown.clone(),
+            paused.clone(),
+        );
         move || {
             if shutdown.load(Ordering::Relaxed) {
                 state.borrow_mut().take();
+                tile_hook::unwatch_sessions(wnd.hwnd().ptr() as isize);
                 w::PostQuitMessage(0);
                 return Ok(());
             }
@@ -196,6 +209,14 @@ fn run(
         let tx = tx.clone();
         move |_| {
             let _ = tx.send(TrayEvent::DisplayChanged);
+            Ok(())
+        }
+    });
+
+    wnd.on().wm_wts_session_change({
+        let tx = tx.clone();
+        move |_| {
+            let _ = tx.send(TrayEvent::SessionChanged);
             Ok(())
         }
     });

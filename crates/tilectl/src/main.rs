@@ -1,10 +1,12 @@
 mod install;
 
+use std::path::PathBuf;
+
 use anyhow::{Context, bail};
 use clap::{Parser, Subcommand, ValueEnum};
 use tile_ipc::{Client, Event, Query, Request, Response};
 
-/// Control a running Tile window manager.
+/// Control Tile, the tiling window manager and key remapper.
 #[derive(Parser)]
 #[command(version, about)]
 struct Args {
@@ -30,8 +32,13 @@ enum Cmd {
     Subscribe,
     /// Reload the config file.
     Reload,
-    /// Install Tile for this user: copy it to %LOCALAPPDATA%\Programs\Tile, put `tilectl` on
-    /// your PATH, start Tile at sign-in and run it now. Run again after a rebuild to update.
+    /// Check a config file (default: %APPDATA%\Tile\config.toml) and print what is wrong.
+    Check { file: Option<PathBuf> },
+    /// Print the config file's path.
+    Config,
+    /// Install Tile: copy it to C:\Program Files\Tile, run it as administrator at sign-in (so
+    /// it manages admin windows and remaps keys in them), put `tilectl` on your PATH and start
+    /// it now. Run again after a rebuild to update.
     Install,
     /// Stop Tile and undo `install`. Your config and logs are kept.
     Uninstall,
@@ -128,6 +135,13 @@ fn print_event(event: &Event) {
     println!("{}", serde_json::to_string(event).unwrap_or_default());
 }
 
+fn check(file: Option<PathBuf>) -> anyhow::Result<()> {
+    let path = file.unwrap_or_else(tile_config::default_path);
+    tile_config::Loaded::load(&path)?;
+    println!("{}: ok", path.display());
+    Ok(())
+}
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
@@ -146,6 +160,11 @@ async fn main() -> anyhow::Result<()> {
             },
             false,
         ),
+        Cmd::Check { file } => return check(file),
+        Cmd::Config => {
+            println!("{}", tile_config::default_path().display());
+            return Ok(());
+        }
         Cmd::Install => return install::install().await,
         Cmd::Uninstall => return install::uninstall().await,
         Cmd::Elevated { report, step } => return install::elevated(step, &report).await,

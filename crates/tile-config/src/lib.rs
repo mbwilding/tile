@@ -1,6 +1,8 @@
-//! TOML configuration for Tile: schema, keybind parsing, window rules and hot reload.
+//! TOML configuration for Tile: schema, keybind parsing, window rules, key remapping and hot
+//! reload.
 
 mod keys;
+mod remap;
 mod rules;
 mod schema;
 mod watch;
@@ -12,7 +14,7 @@ use std::{
 
 pub use keys::{Keybind, Modifiers};
 pub use rules::{RuleOutcome, Rules};
-pub use schema::{Animations, Color, Config, General, Rule};
+pub use schema::{Animations, Color, Config, General, Remap, Rule};
 pub use watch::watch;
 
 use tile_core::Command;
@@ -27,6 +29,8 @@ pub enum ConfigError {
     Bind(String, String),
     #[error("rule #{0}: {1}")]
     Rule(usize, String),
+    #[error("remap: {}", .0.join("; "))]
+    Remap(Vec<String>),
 }
 
 /// A validated configuration, ready to use.
@@ -35,6 +39,8 @@ pub struct Loaded {
     pub config: Config,
     pub binds: Vec<(Keybind, Command)>,
     pub rules: Rules,
+    /// `[remap]`, compiled for the remapping engine.
+    pub remap: tile_remap::Config,
 }
 
 impl Loaded {
@@ -71,10 +77,12 @@ impl Loaded {
             })
             .collect::<Result<_, ConfigError>>()?;
         let rules = Rules::compile(&config.rules)?;
+        let remap = remap::compile(&config.remap).map_err(ConfigError::Remap)?;
         Ok(Self {
             config,
             binds,
             rules,
+            remap,
         })
     }
 
@@ -95,7 +103,8 @@ pub fn default_path() -> PathBuf {
 const TEMPLATE_HEADER: &str = "\
 # Tile config. Everything below is the built-in default, commented out.
 # Uncomment a line (and its [section] header) to override it; saved changes are applied live.
-# A [binds] or [[rules]] table replaces that whole set of defaults.
+# A [binds], [[rules]] or [remap.layers] table replaces that whole set of defaults.
+# [general] tiling and remap switch the window manager and the key remapper on or off.
 
 ";
 
@@ -183,6 +192,21 @@ mod tests {
         let err = Loaded::parse("[binds]\n\"super+q\" = \"explode\"\n").unwrap_err();
         assert!(err.to_string().contains("super+q"));
         assert!(Loaded::parse("[binds]\n\"hyper+q\" = \"killactive\"\n").is_err());
+    }
+
+    #[test]
+    fn built_in_remap_layers() {
+        let loaded = Loaded::defaults();
+        assert!(loaded.config.general.tiling && loaded.config.general.remap);
+        assert!(loaded.remap.layer("capslock+shift").is_some());
+    }
+
+    #[test]
+    fn remap_layers_replace_the_defaults() {
+        let loaded = Loaded::parse("[remap.layers.main]\ncapslock = \"esc\"\n").unwrap();
+        assert!(loaded.remap.layer("capslock").is_none());
+        let err = Loaded::parse("[remap.layers.main]\ncapslock = \"layer(nav)\"\n").unwrap_err();
+        assert!(err.to_string().contains("unknown layer `nav`"), "{err}");
     }
 
     #[test]
