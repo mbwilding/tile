@@ -1,16 +1,19 @@
 # Tile
 
-A dynamic tiling window manager for Windows, written in Rust with **zero `unsafe`** in this
-repository (`unsafe_code = "forbid"` in every crate). Win32 access goes through safe wrappers:
+A dynamic tiling window manager for Windows, with a [keyd](https://github.com/rvaiya/keyd)-style
+key remapper built in (layers, home-row mods, tap/hold keys). Either side can be switched off.
+Written in Rust; all `unsafe` lives in one small crate (`tile-hook`: the keyboard hooks and
+`SendInput`), and every other crate has `unsafe_code = "forbid"`. The rest of the Win32 access
+goes through safe wrappers:
 [`winsafe`](https://crates.io/crates/winsafe),
 [`wineventhook`](https://crates.io/crates/wineventhook),
-[`win-hotkeys`](https://crates.io/crates/win-hotkeys),
 [`uiautomation`](https://crates.io/crates/uiautomation),
 [`tray-icon`](https://crates.io/crates/tray-icon) and
 [`winvd`](https://crates.io/crates/winvd).
 
 Keybinds are handled in-process by a low-level keyboard hook, including `Win` combos (the Start
-menu is suppressed), so no separate hotkey program is needed.
+menu is suppressed), so no separate hotkey program is needed. The remapper has its own hook in
+front of it, so keybinds see keys as remapped: a home-row `Win` works for `Win+` binds.
 
 ## Features
 
@@ -23,11 +26,17 @@ menu is suppressed), so no separate hotkey program is needed.
 - Coloured focus borders (Windows 11) and eased move/resize animations, paced by each app's own
   redraws
 - Optional title bar removal for tiled windows, with per-app overrides
-- TOML config, applied live on save, with window rules
-- `tilectl`: dispatch commands, query state as JSON, subscribe to events, install/uninstall
+- Key remapping in keyd's terms: layers, `[layer:C]` modifier layers, `[a+b]` composite layers,
+  `layer()`, `overload()`, `overloadt()` and key sequences like `C-left`. The built-in layers
+  are nona's keyd setup, so the same keyboard works on Linux and Windows
+- TOML config, applied live on save, with window rules; `general.tiling` and `general.remap`
+  switch the window manager and the remapper on or off
+- `tilectl`: dispatch commands, query state as JSON, subscribe to events, check the config,
+  install/uninstall
 - Tray icon: pause, reload, open config or logs, quit
 - Everything Tile changes is undone when it stops, including on a crash or a hard kill (a small
-  watchdog process handles that)
+  watchdog process handles that). Held keys are released on exit, pause, reload, and when the
+  session locks or unlocks
 
 ## Install and run
 
@@ -47,7 +56,9 @@ without a UAC prompt at sign-in:
 - `C:\Program Files\Tile` goes on your user `PATH`, for `tilectl` in terminals started after your
   next sign-in.
 
-It replaces a running Tile and asks for admin rights once. To update after a rebuild, run
+It replaces a running Tile and asks for admin rights once. It also stops and removes the
+standalone Key remapper (`C:\Program Files\Key`, its sign-in task and `PATH` entry) if that is
+installed, since Tile remaps keys itself now; Key's config in `%APPDATA%\Key` is left alone. To update after a rebuild, run
 `tilectl install` again from the checkout: the installed `tilectl` installs the build in
 `.\target\release`. Running programs never block an update, since the old files are moved aside
 and deleted on the next install. `tilectl uninstall` stops Tile and undoes all of that, keeping
@@ -98,11 +109,14 @@ keys take priority over Windows' own `Win+` shortcuts; unbound ones still reach 
 
 On first run Tile writes `%APPDATA%\Tile\config.toml` with every default listed but commented
 out. Uncomment a line, together with its `[section]` header, to change it; saved changes apply
-immediately. A `[binds]` table or `[[rules]]` list replaces the defaults entirely, so the
-generated file lists them all as a starting point.
+immediately. A `[binds]` table, `[[rules]]` list or `[remap.layers]` table replaces the defaults
+entirely, so the generated file lists them all as a starting point. `tilectl check` reports
+what is wrong with a config; a bad one is not applied (the previous one is kept).
 
 ```toml
 [general]
+tiling = true                 # manage windows; false leaves them alone (no layouts, binds, rules)
+remap = true                  # remap keys with the [remap] layers
 gaps_in = 10                  # px between neighbouring windows
 gaps_out = 10                 # px between windows and the monitor edge
 layout = "dwindle"            # layout of new workspaces: dwindle | master | monocle | scrolling
@@ -132,6 +146,15 @@ proportion = 0.5              # width of new columns, as a share of the monitor
 proportion_presets = [0.333, 0.5, 0.667, 1.0] # widths `cycleproportion` steps through
 center_focused = "on_overflow" # always | on_overflow | never
 
+[remap]
+modifier_guard = true         # a layer's lone Alt or Win doesn't open a menu or Start
+
+[remap.layers.main]
+capslock = "overload(nav, esc)"
+
+[remap.layers."nav:C"]
+h = "left"
+
 [binds]
 "super+enter" = "exec wt.exe"
 "super+shift+q" = "killactive"
@@ -140,6 +163,9 @@ center_focused = "on_overflow" # always | on_overflow | never
 exe = "^Spotify\\.exe$"
 workspace = 9
 ```
+
+Turning `tiling` off at runtime gives every window back (shown, title bars and borders restored)
+and Win+L back to Windows; turning it on manages the open windows again.
 
 ### Keybinds
 
@@ -175,7 +201,7 @@ letters, digits, `f1`..`f24`, `left`/`right`/`up`/`down`, `space`, `tab`, `enter
 | `movetodesktop <n\|next\|prev>` | send the window to another virtual desktop |
 | `pin` | show the window on all virtual desktops (it floats) |
 | `lock` | lock the computer (works while Win+L is taken over) |
-| `reload` / `togglepause` / `exit` | reload the config / pause tiling / quit |
+| `reload` / `togglepause` / `exit` | reload the config / pause tiling and remapping / quit |
 
 Directions can also be written `left`, `right`, `up` and `down`.
 
@@ -197,6 +223,51 @@ overrides an earlier one. Actions:
 rules float standard dialogs and ignore shell windows, PowerToys and ShareX. Dialogs and
 fixed-size windows float even without a rule.
 
+### Key remapping
+
+`[remap.layers]` holds keyd's config as TOML: each table is a keyd section, named like keyd's
+section header (quoted when it has `:` or `+`), and maps keys to actions.
+
+```toml
+[remap.layers.main]
+capslock = "overload(nav, esc)"   # tap for Escape, hold for the nav layer
+a = "overloadt(control, a, 200)"  # Control once held for 200ms
+rightalt = "layer(nav)"
+
+[remap.layers."nav:C"]            # keys nav doesn't bind get Control while it's held
+h = "left"
+l = "right"
+
+[remap.layers."nav+shift"]        # while nav and shift are both active
+h = "C-left"
+```
+
+| Action | Effect |
+| --- | --- |
+| `<key>` / `C-left` / `!` | send a key, with modifiers or as a shifted character |
+| `layer(<name>)` | the layer is active while the key is held |
+| `overload(<name>, <key>)` | the layer while held, the key if tapped alone |
+| `overloadt(<name>, <key>, <ms>)` | the layer once held for `ms`, the key if released before |
+| `noop` | nothing |
+
+keyd's semantics apply: layers stack, unbound keys fall through to `main`, a layer's modifiers
+apply to the keys it doesn't bind, and keys typed while an `overloadt` key is deciding are
+replayed in order once it's decided, so fast rolls type normally. Keys no layer touches are let
+through untouched.
+
+Keys are physical positions named after the US QWERTY layout (keyd's names: `a`, `;`, `/`,
+`leftshift`, `capslock`, `esc`, `f1`…), not characters, and Windows' keyboard layout applies to
+what Tile sends. With the Windows Dvorak layout, the default `capslock` layer's `j c v p` are
+Dvorak's `h j k l`, as on nona. Built-in layers: `control`, `shift`, `alt`, `meta` and `altgr`.
+Modifier letters: `C`, `S`, `A`, `M` (Win) and `G` (AltGr).
+
+Not supported yet: `oneshot`, `toggle`, `swap`, `macro`, `overloadt2`, `timeout` and keyd's other
+actions, aliases and `include`. Per-keyboard `[ids]` can't be: a low-level keyboard hook can't
+tell keyboards apart, so the layers apply to every keyboard.
+
+**Emergency exit:** holding Backspace + Escape + Enter (physical keys) turns remapping off until
+the config is reloaded, as in keyd.
+
 ## tilectl
 
 ```powershell
@@ -204,6 +275,8 @@ tilectl dispatch workspace 3      # run any dispatcher
 tilectl query windows             # monitors | workspaces | windows | activewindow; --json for JSON
 tilectl subscribe                 # JSON lines on workspace, active window and layout changes
 tilectl reload                    # reload the config
+tilectl check [file]              # check a config file without applying it
+tilectl config                    # print the config file's path
 tilectl install / uninstall       # see "Install and run"
 ```
 
@@ -229,7 +302,12 @@ Click to Do.
 **Admin windows.** A program running without admin rights can't move admin windows or see keys
 pressed in them. The installed Tile runs as administrator, so it manages them like any other
 window. A Tile started by hand without admin rights (e.g. `cargo run`) leaves them alone, and its
-keybinds don't work while one has focus.
+keybinds and remapping don't work while one has focus.
+
+**Secure desktops.** No program sees keys on the lock screen, UAC prompts or Ctrl+Alt+Del. The
+remapper resets on lock and unlock; after a UAC prompt, a layer key released on the prompt may
+need pressing again. If Tile is killed (not quit), a modifier the remapper was holding stays down
+until you press and release it.
 
 **Minimum sizes.** Apps that refuse a tile smaller than their minimum size are placed with
 `SWP_NOSENDCHANGING`, so they fit their tile anyway.
@@ -249,8 +327,10 @@ anything left over.
 | Crate | Purpose |
 | --- | --- |
 | `tile-core` | Platform-independent state, layouts, dispatchers and easing (unit tested) |
-| `tile-config` | TOML schema, keybind parsing, window rules, config template and file watching |
-| `tile-platform` | Win32: window events, placement and animation, keyboard hook, tray, virtual desktops |
+| `tile-remap` | The remapping engine: keyd's layers and overloads as a pure state machine (tested) |
+| `tile-config` | TOML schema, keybind parsing, window rules, remap layers, config template and file watching |
+| `tile-hook` | The keyboard hooks and `SendInput`: the only `unsafe` |
+| `tile-platform` | Win32: window events, placement and animation, hotkeys, tray, virtual desktops |
 | `tile-ipc` | Named-pipe JSON protocol |
 | `tile` | The daemon (`tile.exe`) |
 | `tilectl` | The command-line tool (`tilectl.exe`), including install/uninstall |

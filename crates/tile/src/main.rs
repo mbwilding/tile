@@ -5,6 +5,7 @@ mod daemon;
 mod desktops;
 mod launch;
 mod paths;
+mod remap;
 
 use std::path::PathBuf;
 
@@ -12,7 +13,7 @@ use clap::Parser;
 use tile_config::Loaded;
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
-/// A dynamic tiling window manager for Windows.
+/// A dynamic tiling window manager and keyd-style key remapper for Windows.
 #[derive(Parser)]
 #[command(version, about)]
 struct Args {

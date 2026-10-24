@@ -24,11 +24,15 @@ use crate::{
     desktops::Desktops,
     launch,
     paths::{self, Restore},
+    remap::{self, Notice, Remap},
 };
 
 /// How long an event we caused ourselves (hide/show) may take to arrive.
 const SELF_EVENT_WINDOW: Duration = Duration::from_secs(2);
 const RELOAD_DEBOUNCE: Duration = Duration::from_millis(200);
+/// Logged when the remapper's emergency exit is typed.
+const REMAP_PANIC: &str =
+    "emergency exit (Backspace+Escape+Enter): remapping is off until the config is reloaded";
 
 /// A window being animated. The mover draws the frames on its own thread; the daemon only
 /// keeps the animation to know where the window is and when it ends.
@@ -51,6 +55,7 @@ struct Receivers {
     tray: UnboundedReceiver<TrayEvent>,
     ipc: UnboundedReceiver<Incoming>,
     config: UnboundedReceiver<()>,
+    remap: UnboundedReceiver<Notice>,
 }
 
 struct Daemon {
@@ -63,6 +68,11 @@ struct Daemon {
     tray: Tray,
     paused: bool,
     quit: bool,
+    /// The window manager is on (`general.tiling`).
+    tiling: bool,
+    /// The key remapper, while `general.remap` is on.
+    remap: Option<Remap>,
+    remap_notices: UnboundedSender<Notice>,
     monitors: Vec<MonitorInfo>,
     /// The last rect we placed each window at (or are animating it towards).
     placed: HashMap<WindowId, Rect>,
@@ -183,12 +193,14 @@ pub async fn run(config_path: PathBuf, loaded: Loaded) -> anyhow::Result<()> {
     let (ipc_tx, ipc_rx) = mpsc::unbounded_channel();
     let (config_tx, config_rx) = mpsc::unbounded_channel();
     let (desktop_tx, desktop_rx) = mpsc::unbounded_channel();
+    let (remap_tx, remap_rx) = mpsc::unbounded_channel();
 
     let (hooks, events) = WinEventHooks::install()
         .await
         .context("failed to hook window events")?;
     let _desktop_listener = vd::listen(desktop_tx);
-    let hotkeys = Hotkeys::start(hotkey_tx);
+    // Before the remapper: see `Hotkeys`.
+    let hotkeys = Hotkeys::start(hotkey_tx).context("failed to install the keyboard hook")?;
     let tray = Tray::spawn(tray_tx);
     let _watcher = tile_config::watch(&config_path, move || {
         let _ = config_tx.send(());
@@ -210,6 +222,9 @@ pub async fn run(config_path: PathBuf, loaded: Loaded) -> anyhow::Result<()> {
         tray,
         paused: false,
         quit: false,
+        tiling: false,
+        remap: None,
+        remap_notices: remap_tx,
         monitors: Vec::new(),
         placed: HashMap::new(),
         tweens: HashMap::new(),
@@ -230,10 +245,10 @@ pub async fn run(config_path: PathBuf, loaded: Loaded) -> anyhow::Result<()> {
         heal_at: None,
         resyncing_focus: false,
     };
-    daemon.update_lock_override();
-    daemon.switch_off_click_to_do();
-    daemon.install_binds();
-    daemon.startup();
+    if daemon.loaded.config.general.tiling {
+        daemon.start_tiling();
+    }
+    daemon.update_remap();
     tracing::info!("Tile started");
 
     daemon
@@ -244,6 +259,7 @@ pub async fn run(config_path: PathBuf, loaded: Loaded) -> anyhow::Result<()> {
             tray: tray_rx,
             ipc: ipc_rx,
             config: config_rx,
+            remap: remap_rx,
         })
         .await;
 
@@ -291,7 +307,9 @@ impl Daemon {
             tokio::select! {
                 () = relock => {
                     self.relock_at = None;
-                    tile_platform::set_lock_disabled(true);
+                    if self.lock_taken {
+                        tile_platform::set_lock_disabled(true);
+                    }
                 }
                 () = heal => {
                     self.heal_at = None;
@@ -308,6 +326,7 @@ impl Daemon {
                 Some(event) = rx.tray.recv() => self.on_tray(event),
                 Some(incoming) = rx.ipc.recv() => self.on_ipc(incoming),
                 Some(()) = rx.config.recv() => reload_at = Some(Instant::now() + RELOAD_DEBOUNCE),
+                Some(Notice::Panic) = rx.remap.recv() => self.stop_remap(REMAP_PANIC),
                 () = reload => {
                     reload_at = None;
                     self.reload();
@@ -343,6 +362,17 @@ impl Daemon {
     }
 
     fn shutdown(&mut self) {
+        self.stop_remap("remapping stopped");
+        self.release_windows();
+        if self.lock_taken {
+            tile_platform::set_lock_disabled(false);
+        }
+        paths::save_restore(&Restore::default());
+        self.tray.shutdown();
+    }
+
+    /// Shows the windows we hid and undoes our borders and title bar changes.
+    fn release_windows(&mut self) {
         for id in self.desktops.hidden() {
             self.windows.show(id);
         }
@@ -354,14 +384,95 @@ impl Daemon {
                 self.windows.set_decorated(id, true);
             }
         }
-        if self.lock_taken {
-            tile_platform::set_lock_disabled(false);
+    }
+
+    /// Turns the window manager on: takes over Win+L, installs the binds and manages the
+    /// windows that are open.
+    fn start_tiling(&mut self) {
+        self.tiling = true;
+        let config = &self.loaded.config;
+        self.desktops = Desktops::new(
+            vd::current_desktop().unwrap_or_default(),
+            config.layout_settings(),
+            config.general.layout,
+        );
+        self.update_lock_override();
+        self.switch_off_click_to_do();
+        self.install_binds();
+        if !self.paused {
+            self.startup();
         }
-        paths::save_restore(&Restore::default());
-        self.tray.shutdown();
+        tracing::info!("tiling started");
+    }
+
+    /// Turns the window manager off, giving back every window and Win+L.
+    fn stop_tiling(&mut self) {
+        self.release_windows();
+        self.tiling = false;
+        self.update_lock_override();
+        self.install_binds();
+        let config = &self.loaded.config;
+        self.desktops = Desktops::new(
+            vd::current_desktop().unwrap_or_default(),
+            config.layout_settings(),
+            config.general.layout,
+        );
+        self.monitors.clear();
+        self.placed.clear();
+        self.tweens.clear();
+        self.moving.clear();
+        self.pending_show.clear();
+        self.pending_hide.clear();
+        self.ignored.clear();
+        self.bordered = None;
+        self.decoration_rules.clear();
+        self.forced.clear();
+        self.heal_at = None;
+        self.persist_restore();
+        self.publish();
+        tracing::info!("tiling stopped");
+    }
+
+    /// Starts, updates or stops the key remapper to match `general.remap`.
+    fn update_remap(&mut self) {
+        if !self.loaded.config.general.remap {
+            self.stop_remap("remapping stopped");
+            return;
+        }
+        let config = self.loaded.remap.clone();
+        if let Some(remap) = &self.remap {
+            remap.send(remap::Command::Load(config));
+            return;
+        }
+        match Remap::start(config, self.paused, self.remap_notices.clone()) {
+            Ok(remap) => {
+                self.remap = Some(remap);
+                if !tile_platform::is_elevated() {
+                    tracing::warn!(
+                        "not running as administrator: keys typed into admin windows aren't \
+                         remapped (`tilectl install` sets Tile up to run elevated)"
+                    );
+                }
+                tracing::info!("remapping started");
+            }
+            Err(e) => tracing::error!("failed to install the remapping hook: {e}"),
+        }
+    }
+
+    /// Removes the remapping hook, if it runs, logging `why`.
+    fn stop_remap(&mut self, why: &str) {
+        if let Some(remap) = self.remap.take() {
+            remap.stop();
+            tracing::info!("{why}");
+        }
     }
 
     fn install_binds(&mut self) {
+        if !self.tiling {
+            self.commands.clear();
+            self.hotkeys.set_binds(&[]);
+            return;
+        }
         // Without the takeover, Windows would lock *and* run the bind.
         let win_l = self.win_l_available();
         if !win_l && self.loaded.binds.iter().any(|(bind, _)| bind.is_win_l()) {
@@ -389,41 +500,55 @@ impl Daemon {
         match Loaded::load_or_default(&self.config_path) {
             Ok(loaded) => {
                 self.loaded = loaded;
-                self.ignored.clear();
-                self.update_lock_override();
-                self.switch_off_click_to_do();
-                self.install_binds();
-                self.decoration_rules = self
-                    .desktops
-                    .managed()
-                    .into_iter()
-                    .filter_map(|id| {
-                        let info = self.windows.info(id)?;
-                        self.loaded
-                            .rules
-                            .resolve(&info)
-                            .decorations
-                            .map(|d| (id, d))
-                    })
-                    .collect();
-                let config = &self.loaded.config;
-                let effects = self
-                    .desktops
-                    .set_settings(config.layout_settings(), config.general.layout);
-                self.repaint_borders();
-                self.apply(effects);
+                self.update_remap();
+                match (self.tiling, self.loaded.config.general.tiling) {
+                    (false, true) => self.start_tiling(),
+                    (true, false) => self.stop_tiling(),
+                    (true, true) => self.reload_tiling(),
+                    (false, false) => {}
+                }
                 tracing::info!("config reloaded");
             }
             Err(e) => tracing::error!("keeping previous config: {e}"),
         }
     }
 
+    /// Applies a reloaded config to the running window manager.
+    fn reload_tiling(&mut self) {
+        self.ignored.clear();
+        self.update_lock_override();
+        self.switch_off_click_to_do();
+        self.install_binds();
+        self.decoration_rules = self
+            .desktops
+            .managed()
+            .into_iter()
+            .filter_map(|id| {
+                let info = self.windows.info(id)?;
+                self.loaded
+                    .rules
+                    .resolve(&info)
+                    .decorations
+                    .map(|d| (id, d))
+            })
+            .collect();
+        let config = &self.loaded.config;
+        let effects = self
+            .desktops
+            .set_settings(config.layout_settings(), config.general.layout);
+        self.repaint_borders();
+        self.apply(effects);
+    }
+
     fn set_paused(&mut self, paused: bool) {
         self.paused = paused;
         self.hotkeys.set_paused(paused);
         self.tray.set_paused(paused);
+        if let Some(remap) = &self.remap {
+            remap.send(remap::Command::Pause(paused));
+        }
         tracing::info!("Tile {}", if paused { "paused" } else { "resumed" });
-        if !paused {
+        if !paused && self.tiling {
             self.refresh_monitors();
             self.sweep();
             self.discover_existing();
@@ -432,9 +557,9 @@ impl Daemon {
         }
     }
 
-    /// Takes over or gives back Win+L to match `general.override_win_l`.
+    /// Takes over or gives back Win+L to match `general.override_win_l` (while tiling).
     fn update_lock_override(&mut self) {
-        let want = self.loaded.config.general.override_win_l;
+        let want = self.tiling && self.loaded.config.general.override_win_l;
         // Leave a policy the user (or an admin) set themselves alone.
         if want && !self.lock_taken && !tile_platform::lock_disabled() {
             if tile_platform::set_lock_disabled(true) {
@@ -454,7 +579,8 @@ impl Daemon {
     /// Switches Click to Do off if `general.disable_click_to_do` asks for it. It stays off after
     /// Tile exits: Windows pops up a notice on every flip.
     fn switch_off_click_to_do(&self) {
-        if self.loaded.config.general.disable_click_to_do
+        if self.tiling
+            && self.loaded.config.general.disable_click_to_do
             && tile_platform::click_to_do_available()
             && !tile_platform::click_to_do_disabled()
             && tile_platform::disable_click_to_do()
@@ -529,7 +655,7 @@ impl Daemon {
             Command::Exec(line) => launch::exec(&line),
             Command::Desktop(target) => vd::switch_desktop(target),
             Command::Lock => self.lock(),
-            _ if self.paused => {}
+            _ if self.paused || !self.tiling => {}
             Command::MoveToDesktop(target) => {
                 if let Some(id) = self.focused() {
                     vd::move_to_desktop(id.0, target);
@@ -682,7 +808,7 @@ impl Daemon {
     }
 
     fn on_desktop(&mut self, change: DesktopChange) {
-        if self.paused {
+        if self.paused || !self.tiling {
             return;
         }
         match change {
@@ -720,7 +846,7 @@ impl Daemon {
     }
 
     fn on_event(&mut self, event: WinEvent) {
-        if self.paused {
+        if self.paused || !self.tiling {
             return;
         }
         match event {
@@ -889,7 +1015,13 @@ impl Daemon {
             },
             TrayEvent::OpenLogs => launch::open(&paths::log_dir()),
             TrayEvent::Quit => self.quit = true,
-            TrayEvent::DisplayChanged => self.refresh_monitors(),
+            TrayEvent::DisplayChanged if self.tiling => self.refresh_monitors(),
+            TrayEvent::DisplayChanged => {}
+            TrayEvent::SessionChanged => {
+                if let Some(remap) = &self.remap {
+                    remap.send(remap::Command::Reset);
+                }
+            }
         }
     }
 
@@ -1082,6 +1214,9 @@ impl Daemon {
 
     /// Drops windows that disappeared without us noticing.
     fn sweep(&mut self) {
+        if !self.tiling {
+            return;
+        }
         let dead: Vec<_> = self
             .desktops
             .managed()

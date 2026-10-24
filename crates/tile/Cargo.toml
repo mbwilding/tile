@@ -1,6 +1,6 @@
 [package]
 name = "tile"
-description = "A dynamic tiling window manager for Windows"
+description = "A dynamic tiling window manager and keyd-style key remapper for Windows"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,8 +8,10 @@ license.workspace = true
 [dependencies]
 tile-core.workspace = true
 tile-config.workspace = true
+tile-hook.workspace = true
 tile-ipc.workspace = true
 tile-platform.workspace = true
+tile-remap.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 dirs.workspace = true

@@ -1,18 +1,20 @@
 use std::{
+    io,
     sync::{
         Arc, RwLock,
         atomic::{AtomicBool, Ordering},
     },
-    thread,
+    time::Instant,
 };
 
 use tile_config::{Keybind, Modifiers};
+use tile_hook::{Decision, Handler, Input, RawKey};
 use tokio::sync::mpsc;
-use win_hotkeys::{
-    VKey,
-    hook::{self, KeyAction, KeyboardEvent},
-    state::KeyboardState,
-};
+use win_hotkeys::VKey;
+use winsafe::{self as w, co};
+
+/// An unassigned virtual key: tapping it while Win is down stops Win's release opening Start.
+const SILENT_VK: u16 = 0xE8;
 
 #[derive(Debug, Clone)]
 struct Binding {
@@ -27,70 +29,86 @@ struct Binding {
 ///
 /// Matched keys are swallowed (with the Win key's Start menu suppressed) and the index of
 /// the bind is sent to the daemon. The bind table can be swapped at any time.
+///
+/// Start this before the remapper: Windows calls the newest hook first, so the remapper's
+/// hook then sees physical keys and this one sees the keys it sends.
 #[derive(Clone)]
 pub struct Hotkeys {
     table: Arc<RwLock<Vec<Binding>>>,
     paused: Arc<AtomicBool>,
 }
 
-fn held(state: &KeyboardState) -> Modifiers {
-    let down = |key: VKey| state.is_down(key.to_vk_code());
+/// Matches key presses against the bind table, on the hook thread.
+struct Matcher {
+    hotkeys: Hotkeys,
+    tx: mpsc::UnboundedSender<usize>,
+}
+
+fn held() -> Modifiers {
+    let down = w::GetAsyncKeyState;
     Modifiers {
-        super_key: down(VKey::LWin) || down(VKey::RWin),
-        shift: down(VKey::Shift),
-        ctrl: down(VKey::Control),
-        alt: down(VKey::Menu),
+        super_key: down(co::VK::LWIN) || down(co::VK::RWIN),
+        shift: down(co::VK::SHIFT),
+        ctrl: down(co::VK::CONTROL),
+        alt: down(co::VK::MENU),
+    }
+}
+
+impl Handler for Matcher {
+    fn key(&mut self, key: RawKey) -> Decision {
+        if !key.down || key.vk == SILENT_VK {
+            return Decision::Pass;
+        }
+        let mods = held();
+        let paused = self.hotkeys.paused.load(Ordering::Relaxed);
+        let matched = self.hotkeys.table.read().ok().and_then(|t| {
+            t.iter()
+                .find(|b| b.vk == key.vk && b.modifiers == mods && (b.always || !paused))
+                .map(|b| b.index)
+        });
+        let Some(index) = matched else {
+            return Decision::Pass;
+        };
+        if mods.super_key {
+            tile_hook::send(&[
+                Input::Vk {
+                    vk: SILENT_VK,
+                    up: false,
+                },
+                Input::Vk {
+                    vk: SILENT_VK,
+                    up: true,
+                },
+            ]);
+        }
+        let _ = self.tx.send(index);
+        Decision::Block
+    }
+
+    fn deadline(&self) -> Option<Instant> {
+        None
+    }
+
+    fn tick(&mut self) {}
+
+    fn wake(&mut self) -> bool {
+        true
     }
 }
 
 impl Hotkeys {
-    /// Starts the keyboard hook on its own thread.
-    pub fn start(tx: mpsc::UnboundedSender<usize>) -> Self {
+    /// Installs the keyboard hook on its own thread. Returns once it is installed.
+    pub fn start(tx: mpsc::UnboundedSender<usize>) -> io::Result<Self> {
         let hotkeys = Self {
             table: Arc::new(RwLock::new(Vec::new())),
             paused: Arc::new(AtomicBool::new(false)),
         };
-        let worker = hotkeys.clone();
-        thread::Builder::new()
-            .name("keyboard hook".into())
-            .spawn(move || worker.run(&tx))
-            .expect("spawn keyboard hook thread");
-        hotkeys
-    }
-
-    fn run(&self, tx: &mpsc::UnboundedSender<usize>) {
-        let hook = hook::start();
-        while let Ok(event) = hook.recv() {
-            let KeyboardEvent::KeyDown {
-                vk_code,
-                keyboard_state,
-            } = event
-            else {
-                continue;
-            };
-            let mods = held(&keyboard_state);
-            let paused = self.paused.load(Ordering::Relaxed);
-            let matched = self.table.read().ok().and_then(|t| {
-                t.iter()
-                    .find(|b| b.vk == vk_code && b.modifiers == mods && (b.always || !paused))
-                    .map(|b| b.index)
-            });
-            match matched {
-                Some(index) => {
-                    // `Replace` also injects a dummy key so releasing Win won't open Start.
-                    hook.key_action(if mods.super_key {
-                        KeyAction::Replace
-                    } else {
-                        KeyAction::Block
-                    });
-                    if tx.send(index).is_err() {
-                        break;
-                    }
-                }
-                None => hook.key_action(KeyAction::Allow),
-            }
-        }
-        hook.exit();
+        let matcher = Matcher {
+            hotkeys: hotkeys.clone(),
+            tx,
+        };
+        tile_hook::spawn("hotkey hook", move || matcher)?;
+        Ok(hotkeys)
     }
 
     /// Replaces the bind table. The `bool` marks binds that also work while paused.

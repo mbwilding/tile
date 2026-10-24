@@ -5,6 +5,9 @@
 //! programs it starts go through the launcher (`tile.exe --launcher`, started by the user's
 //! `Run` key), so they run as the normal user. `tilectl` goes on the user's `PATH`.
 //!
+//! Key, the remapper that is now part of Tile, is stopped and its install removed, so keys
+//! aren't remapped twice.
+//!
 //! The admin part runs in a second `tilectl` started through UAC ([`elevated`]), which reports
 //! back over a named pipe.
 
@@ -39,6 +42,9 @@ const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 const LAUNCHER_RUN_VALUE: &str = "Tile launcher";
 /// The `Run` value earlier, non-elevated installs used for Tile itself.
 const OLD_RUN_VALUE: &str = "Tile";
+/// The pipe and scheduled task of Key, the standalone remapper Tile absorbed.
+const KEY_SOCKET: &str = "key.sock";
+const KEY_TASK: &str = "Key";
 const ENV_KEY: &str = "Environment";
 const PATH_VALUE: &str = "Path";
 
@@ -79,6 +85,11 @@ fn old_install_dir() -> PathBuf {
         .join("Tile")
 }
 
+/// `C:\Program Files\Key`, where Key was installed.
+fn key_install_dir() -> PathBuf {
+    install_dir().with_file_name("Key")
+}
+
 /// The folder holding the build to install: this `tilectl.exe`'s own, or for the installed
 /// `tilectl`, `target\release` under the current folder (a Tile checkout).
 fn build_dir(dir: &Path) -> anyhow::Result<PathBuf> {
@@ -107,6 +118,7 @@ pub async fn install() -> anyhow::Result<()> {
     let source = build_dir(&dir)?;
     stop_tile().await?;
     stop_launcher().await?;
+    stop_key().await?;
     println!("Installing to {} (needs admin rights)...", dir.display());
     let note = run_elevated(&Step::Install {
         source,
@@ -205,6 +217,8 @@ fn run_step(step: &Step) -> anyhow::Result<String> {
             copy_programs(source, &dir)?;
             register_task(&dir.join("tile.exe"), user)
                 .context("failed to register the sign-in task")?;
+            delete_task(KEY_TASK).context("failed to remove Key's sign-in task")?;
+            remove_programs(&key_install_dir())?;
             // We run as administrator: started by us, Tile is too. Unless the prompt was
             // answered with another account, whose desktop it must not start on.
             if current_user()?.eq_ignore_ascii_case(user) {
@@ -215,7 +229,7 @@ fn run_step(step: &Step) -> anyhow::Result<String> {
             }
         }
         Step::Uninstall => {
-            delete_task().context("failed to remove the sign-in task")?;
+            delete_task(TASK).context("failed to remove the sign-in task")?;
             remove_programs(&dir)?;
             Ok(String::new())
         }
@@ -313,11 +327,11 @@ fn register_task(exe: &Path, user: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn delete_task() -> anyhow::Result<()> {
+fn delete_task(name: &str) -> anyhow::Result<()> {
     let _com = w::CoInitializeEx(co::COINIT::APARTMENTTHREADED)?;
     let folder = task_service()?.GetFolder("\\")?;
-    if folder.GetTask(TASK).is_ok() {
-        folder.DeleteTask(TASK)?;
+    if folder.GetTask(name).is_ok() {
+        folder.DeleteTask(name)?;
     }
     Ok(())
 }
@@ -355,6 +369,26 @@ async fn stop_launcher() -> anyhow::Result<()> {
     wait_until_stopped(launcher::is_running, "launcher").await
 }
 
+async fn key_running() -> bool {
+    match KEY_SOCKET.to_ns_name::<GenericNamespaced>() {
+        Ok(name) => Stream::connect(name).await.is_ok(),
+        Err(_) => false,
+    }
+}
+
+/// Asks a running Key to exit (its pipe takes an `exit` line) and waits until it has.
+async fn stop_key() -> anyhow::Result<()> {
+    if !key_running().await {
+        return Ok(());
+    }
+    let conn = Stream::connect(KEY_SOCKET.to_ns_name::<GenericNamespaced>()?).await?;
+    (&conn).write_all(b"exit\n").await?;
+    BufReader::new(&conn).read_line(&mut String::new()).await?;
+    wait_until_stopped(key_running, "Key").await?;
+    println!("Stopped the running Key: Tile remaps keys now.");
+    Ok(())
+}
+
 async fn wait_until_stopped<F: Future<Output = bool>>(
     running: fn() -> F,
     what: &str,
@@ -371,9 +405,11 @@ async fn wait_until_stopped<F: Future<Output = bool>>(
     Ok(())
 }
 
-/// Removes what earlier, per-user versions installed: their `Run` value, `PATH` entry and folder.
+/// Removes what earlier, per-user versions installed (their `Run` value, `PATH` entry and
+/// folder) and Key's `PATH` entry.
 fn remove_old_install() {
     let old = old_install_dir();
+    let _ = set_on_path(&key_install_dir(), false);
     let _ = set_run(OLD_RUN_VALUE, None);
     let _ = set_on_path(&old, false);
     let _ = fs::remove_dir_all(&old);
