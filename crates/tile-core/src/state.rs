@@ -223,6 +223,10 @@ impl State {
         self.monitors.len()
     }
 
+    pub fn focused_monitor(&self) -> Option<&MonitorInfo> {
+        self.monitors.get(self.focused_monitor).map(|m| &m.info)
+    }
+
     pub fn focused_workspace(&self) -> Option<u8> {
         self.monitors.get(self.focused_monitor).map(|m| m.workspace)
     }
@@ -939,6 +943,7 @@ impl State {
         };
         match (&mut ws.layout, command) {
             (LayoutState::Master(m), Command::SwapWithMaster) => m.swap_with_master(id, s),
+            (LayoutState::Dwindle(d), Command::SwapWithMaster) => d.swap_with_main(id),
             (LayoutState::Dwindle(d), Command::ToggleSplit) => d.toggle_split(id, area, s),
             (LayoutState::Scrolling(l), Command::ScrollerProportion(p)) => l.set_proportion(id, *p),
             (LayoutState::Scrolling(l), Command::CycleProportion) => l.cycle_proportion(id, s),

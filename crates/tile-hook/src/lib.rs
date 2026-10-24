@@ -1,6 +1,7 @@
 //! The Win32 calls winsafe doesn't wrap safely: `WH_KEYBOARD_LL` hooks that can block key-ups
-//! and report scancodes, `SendInput` by scancode, and session notifications. This is the only
-//! crate in Tile with `unsafe`, and it exposes a safe API.
+//! and report scancodes, `SendInput` by scancode, session notifications and swapping the system
+//! cursors (to hide the pointer). This is the only crate in Tile with `unsafe`, and it exposes
+//! a safe API.
 
 use std::{
     cell::RefCell,
@@ -29,11 +30,14 @@ use windows_sys::Win32::{
             KEYEVENTF_SCANCODE, SendInput,
         },
         WindowsAndMessaging::{
-            CallNextHookEx, DispatchMessageW, HC_ACTION, KBDLLHOOKSTRUCT, LLKHF_EXTENDED,
-            LLKHF_INJECTED, MSG, MWMO_INPUTAVAILABLE, MsgWaitForMultipleObjectsEx, PM_NOREMOVE,
-            PM_REMOVE, PeekMessageW, PostThreadMessageW, QS_ALLINPUT, SetWindowsHookExW,
-            TranslateMessage, UnhookWindowsHookEx, WH_KEYBOARD_LL, WM_APP, WM_KEYDOWN, WM_QUIT,
-            WM_SYSKEYDOWN,
+            CallNextHookEx, CreateCursor, DestroyCursor, DispatchMessageW, HC_ACTION,
+            KBDLLHOOKSTRUCT, LLKHF_EXTENDED, LLKHF_INJECTED, MSG, MWMO_INPUTAVAILABLE,
+            MsgWaitForMultipleObjectsEx, OCR_APPSTARTING, OCR_CROSS, OCR_HAND, OCR_HELP, OCR_IBEAM,
+            OCR_NO, OCR_NORMAL, OCR_SIZEALL, OCR_SIZENESW, OCR_SIZENS, OCR_SIZENWSE, OCR_SIZEWE,
+            OCR_UP, OCR_WAIT, PM_NOREMOVE, PM_REMOVE, PeekMessageW, PostThreadMessageW,
+            QS_ALLINPUT, SPI_SETCURSORS, SYSTEM_CURSOR_ID, SetSystemCursor, SetWindowsHookExW,
+            SystemParametersInfoW, TranslateMessage, UnhookWindowsHookEx, WH_KEYBOARD_LL, WM_APP,
+            WM_KEYDOWN, WM_QUIT, WM_SYSKEYDOWN,
         },
     },
 };
@@ -256,6 +260,69 @@ pub fn send(inputs: &[Input]) -> usize {
         )
     };
     sent as usize
+}
+
+/// The system cursors [`hide_cursor`] blanks out: every shape apps get from `LoadCursor`.
+const CURSORS: [SYSTEM_CURSOR_ID; 14] = [
+    OCR_NORMAL,
+    OCR_IBEAM,
+    OCR_WAIT,
+    OCR_CROSS,
+    OCR_UP,
+    OCR_SIZENWSE,
+    OCR_SIZENESW,
+    OCR_SIZEWE,
+    OCR_SIZENS,
+    OCR_SIZEALL,
+    OCR_NO,
+    OCR_HAND,
+    OCR_APPSTARTING,
+    OCR_HELP,
+];
+
+/// Hides the pointer everywhere by swapping every system cursor for a transparent one, until
+/// [`restore_cursors`]. Apps drawing their own cursor images still show them. Returns `false`
+/// if some cursor couldn't be swapped.
+pub fn hide_cursor() -> bool {
+    // A 32x32 monochrome cursor: 4 bytes a row. AND bits set and XOR bits clear leave the
+    // screen untouched.
+    let and = [0xFF_u8; 32 * 4];
+    let xor = [0_u8; 32 * 4];
+    let mut all = true;
+    for id in CURSORS {
+        // SAFETY: both planes are live 32x32 1bpp bitmaps, the size given; a null instance is
+        // allowed for a cursor not tied to a module.
+        let blank = unsafe {
+            CreateCursor(
+                ptr::null_mut(),
+                0,
+                0,
+                32,
+                32,
+                and.as_ptr().cast(),
+                xor.as_ptr().cast(),
+            )
+        };
+        if blank.is_null() {
+            all = false;
+            continue;
+        }
+        // SAFETY: `blank` is a cursor we own; on success the system takes it over (and
+        // destroys it later), on failure it is still ours and destroyed here.
+        unsafe {
+            if SetSystemCursor(blank, id) == 0 {
+                DestroyCursor(blank);
+                all = false;
+            }
+        }
+    }
+    all
+}
+
+/// Reloads the user's cursor scheme, undoing [`hide_cursor`].
+pub fn restore_cursors() -> bool {
+    // SAFETY: `SPI_SETCURSORS` reads no parameter (null) and, with no flags, writes nothing.
+    unsafe { SystemParametersInfoW(SPI_SETCURSORS, 0, ptr::null_mut(), 0) != 0 }
 }
 
 /// Asks for `WM_WTSSESSION_CHANGE` (lock, unlock, …) to be sent to the window with handle
