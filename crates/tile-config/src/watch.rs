@@ -6,7 +6,10 @@ use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 ///
 /// The parent directory is watched because many editors save by replacing the file.
 /// Keep the returned watcher alive for as long as notifications are wanted.
-pub fn watch(path: &Path, on_change: impl Fn() + Send + 'static) -> notify::Result<RecommendedWatcher> {
+pub fn watch(
+    path: &Path,
+    on_change: impl Fn() + Send + 'static,
+) -> notify::Result<RecommendedWatcher> {
     let target: PathBuf = path.to_path_buf();
     let file_name = target.file_name().map(ToOwned::to_owned);
     let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
@@ -14,7 +17,11 @@ pub fn watch(path: &Path, on_change: impl Fn() + Send + 'static) -> notify::Resu
         if !matches!(event.kind, EventKind::Create(_) | EventKind::Modify(_)) {
             return;
         }
-        if event.paths.iter().any(|p| p.file_name() == file_name.as_deref()) {
+        if event
+            .paths
+            .iter()
+            .any(|p| p.file_name() == file_name.as_deref())
+        {
             on_change();
         }
     })?;

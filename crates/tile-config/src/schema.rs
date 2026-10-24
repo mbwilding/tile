@@ -1,9 +1,7 @@
 use std::{collections::BTreeMap, fmt, str::FromStr};
 
 use serde::{Deserialize, Serialize};
-use tile_core::{
-    LayoutKind, LayoutSettings, animation::Bezier, layout::CenterMode,
-};
+use tile_core::{LayoutKind, LayoutSettings, animation::Bezier, layout::CenterMode};
 
 /// The whole config file. Missing sections fall back to the shipped defaults.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -69,8 +67,10 @@ const DEFAULT_BINDS: &[(&str, &str)] = &[
 ];
 
 fn default_binds() -> BTreeMap<String, String> {
-    let mut binds: BTreeMap<String, String> =
-        DEFAULT_BINDS.iter().map(|(k, v)| ((*k).to_string(), (*v).to_string())).collect();
+    let mut binds: BTreeMap<String, String> = DEFAULT_BINDS
+        .iter()
+        .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+        .collect();
     for n in 1..=9 {
         binds.insert(format!("super+{n}"), format!("workspace {n}"));
         binds.insert(format!("super+shift+{n}"), format!("movetoworkspace {n}"));
@@ -82,15 +82,24 @@ fn default_binds() -> BTreeMap<String, String> {
 fn default_rules() -> Vec<Rule> {
     vec![
         // Standard dialogs.
-        Rule { class: Some("^#32770$".into()), float: Some(true), ..Rule::default() },
+        Rule {
+            class: Some("^#32770$".into()),
+            float: Some(true),
+            ..Rule::default()
+        },
         Rule {
             class: Some(
-                r"^(Windows\.UI\.Core\.CoreWindow|XamlExplorerHostIslandWindow|Shell_TrayWnd)$".into(),
+                r"^(Windows\.UI\.Core\.CoreWindow|XamlExplorerHostIslandWindow|Shell_TrayWnd)$"
+                    .into(),
             ),
             ignore: true,
             ..Rule::default()
         },
-        Rule { exe: Some(r"^(PowerToys.*|ShareX)\.exe$".into()), ignore: true, ..Rule::default() },
+        Rule {
+            exe: Some(r"^(PowerToys.*|ShareX)\.exe$".into()),
+            ignore: true,
+            ..Rule::default()
+        },
     ]
 }
 
@@ -173,7 +182,11 @@ pub struct Animations {
 
 impl Default for Animations {
     fn default() -> Self {
-        Self { enabled: true, duration_ms: 180, bezier: [0.0, 0.75, 0.15, 1.0] }
+        Self {
+            enabled: true,
+            duration_ms: 180,
+            bezier: [0.0, 0.75, 0.15, 1.0],
+        }
     }
 }
 
@@ -206,7 +219,11 @@ pub struct Master {
 
 impl Default for Master {
     fn default() -> Self {
-        Self { mfact: 0.55, count: 1, new_is_master: false }
+        Self {
+            mfact: 0.55,
+            count: 1,
+            new_is_master: false,
+        }
     }
 }
 

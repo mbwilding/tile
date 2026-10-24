@@ -13,11 +13,16 @@ pub struct Master {
 
 impl Master {
     pub fn new(s: &LayoutSettings) -> Self {
-        Self { windows: Vec::new(), mfact: s.master_mfact }
+        Self {
+            windows: Vec::new(),
+            mfact: s.master_mfact,
+        }
     }
 
     pub fn swap_with_master(&mut self, id: WindowId, s: &LayoutSettings) {
-        let Some(pos) = self.windows.iter().position(|w| *w == id) else { return };
+        let Some(pos) = self.windows.iter().position(|w| *w == id) else {
+            return;
+        };
         if pos < s.master_count.max(1) {
             if self.windows.len() > s.master_count {
                 self.windows.swap(pos, s.master_count);
@@ -29,7 +34,13 @@ impl Master {
 }
 
 impl Layout for Master {
-    fn insert(&mut self, id: WindowId, _focused: Option<WindowId>, _area: Rect, s: &LayoutSettings) {
+    fn insert(
+        &mut self,
+        id: WindowId,
+        _focused: Option<WindowId>,
+        _area: Rect,
+        s: &LayoutSettings,
+    ) {
         if s.master_new_is_master {
             self.windows.insert(0, id);
         } else {
@@ -52,7 +63,11 @@ impl Layout for Master {
             rect.split_weighted(Axis::Vertical, &vec![1.0; ids.len()], s.gaps_in)
                 .into_iter()
                 .zip(ids)
-                .map(|(rect, id)| Tile { id: *id, rect, visible: true })
+                .map(|(rect, id)| Tile {
+                    id: *id,
+                    rect,
+                    visible: true,
+                })
                 .collect()
         };
         if self.windows.len() <= count {
@@ -74,9 +89,15 @@ impl Layout for Master {
     }
 
     fn resize(&mut self, id: WindowId, dx: i32, _dy: i32, area: Rect, s: &LayoutSettings) {
-        let Some(pos) = self.windows.iter().position(|w| *w == id) else { return };
+        let Some(pos) = self.windows.iter().position(|w| *w == id) else {
+            return;
+        };
         let change = ratio_of(dx, area.shrink(s.gaps_out).w);
-        let signed = if pos < s.master_count.max(1) { change } else { -change };
+        let signed = if pos < s.master_count.max(1) {
+            change
+        } else {
+            -change
+        };
         self.mfact = (self.mfact + signed).clamp(0.1, 0.9);
     }
 }
@@ -87,7 +108,12 @@ mod tests {
 
     #[test]
     fn master_and_stack() {
-        let s = LayoutSettings { gaps_in: 0, gaps_out: 0, master_mfact: 0.5, ..LayoutSettings::default() };
+        let s = LayoutSettings {
+            gaps_in: 0,
+            gaps_out: 0,
+            master_mfact: 0.5,
+            ..LayoutSettings::default()
+        };
         let area = Rect::new(0, 0, 1000, 900);
         let mut m = Master::new(&s);
         for id in 1..=4 {

@@ -49,12 +49,16 @@ pub fn desktop_of(raw: isize) -> Option<DesktopId> {
     if is_pinned(raw) {
         return None;
     }
-    winvd::get_desktop_by_window(hwnd(raw)).ok().as_ref().and_then(id_of)
+    winvd::get_desktop_by_window(hwnd(raw))
+        .ok()
+        .as_ref()
+        .and_then(id_of)
 }
 
 /// Whether a window is shown on every desktop.
 pub fn is_pinned(raw: isize) -> bool {
-    winvd::is_pinned_window(hwnd(raw)).unwrap_or(false) || winvd::is_pinned_app(hwnd(raw)).unwrap_or(false)
+    winvd::is_pinned_window(hwnd(raw)).unwrap_or(false)
+        || winvd::is_pinned_app(hwnd(raw)).unwrap_or(false)
 }
 
 /// Toggles "Show this window on all desktops".
@@ -79,7 +83,11 @@ fn resolve(target: DesktopTarget) -> Option<Desktop> {
     };
     // Going past the last desktop creates a new one.
     if index >= count {
-        return if index == count { winvd::create_desktop().ok() } else { None };
+        return if index == count {
+            winvd::create_desktop().ok()
+        } else {
+            None
+        };
     }
     Some(winvd::get_desktop(index))
 }
@@ -110,24 +118,27 @@ pub fn listen(tx: UnboundedSender<DesktopChange>) -> Option<DesktopEventThread> 
             return None;
         }
     };
-    let bridge = thread::Builder::new().name("desktop events".into()).spawn(move || {
-        while let Ok(event) = raw_rx.recv() {
-            let change = match event {
-                DesktopEvent::DesktopChanged { new, .. } => match id_of(&new) {
-                    Some(id) => DesktopChange::Switched(id),
-                    None => continue,
-                },
-                DesktopEvent::WindowChanged(h) => DesktopChange::Window(h.0 as isize),
-                DesktopEvent::DesktopCreated(_)
-                | DesktopEvent::DesktopDestroyed { .. }
-                | DesktopEvent::DesktopMoved { .. } => DesktopChange::Changed,
-                DesktopEvent::DesktopNameChanged(..) | DesktopEvent::DesktopWallpaperChanged(..) => continue,
-            };
-            if tx.send(change).is_err() {
-                break;
+    let bridge = thread::Builder::new()
+        .name("desktop events".into())
+        .spawn(move || {
+            while let Ok(event) = raw_rx.recv() {
+                let change = match event {
+                    DesktopEvent::DesktopChanged { new, .. } => match id_of(&new) {
+                        Some(id) => DesktopChange::Switched(id),
+                        None => continue,
+                    },
+                    DesktopEvent::WindowChanged(h) => DesktopChange::Window(h.0 as isize),
+                    DesktopEvent::DesktopCreated(_)
+                    | DesktopEvent::DesktopDestroyed { .. }
+                    | DesktopEvent::DesktopMoved { .. } => DesktopChange::Changed,
+                    DesktopEvent::DesktopNameChanged(..)
+                    | DesktopEvent::DesktopWallpaperChanged(..) => continue,
+                };
+                if tx.send(change).is_err() {
+                    break;
+                }
             }
-        }
-    });
+        });
     if let Err(e) = bridge {
         tracing::warn!("failed to start desktop event bridge: {e}");
     }

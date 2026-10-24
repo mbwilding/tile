@@ -21,15 +21,32 @@ pub fn lock_disabled() -> bool {
 /// Returns whether it worked; the policy key is admin-only on some machines.
 pub fn set_lock_disabled(disabled: bool) -> bool {
     let result = if disabled {
-        w::HKEY::CURRENT_USER.RegSetKeyValue(Some(POLICY_KEY), Some(POLICY_VALUE), w::RegistryValue::Dword(1))
+        w::HKEY::CURRENT_USER.RegSetKeyValue(
+            Some(POLICY_KEY),
+            Some(POLICY_VALUE),
+            w::RegistryValue::Dword(1),
+        )
     } else {
         w::HKEY::CURRENT_USER
-            .RegOpenKeyEx(Some(POLICY_KEY), co::REG_OPTION::default(), co::KEY::SET_VALUE)
+            .RegOpenKeyEx(
+                Some(POLICY_KEY),
+                co::REG_OPTION::default(),
+                co::KEY::SET_VALUE,
+            )
             .and_then(|key| key.RegDeleteValue(Some(POLICY_VALUE)))
-            .or_else(|e| if e == co::ERROR::FILE_NOT_FOUND { Ok(()) } else { Err(e) })
+            .or_else(|e| {
+                if e == co::ERROR::FILE_NOT_FOUND {
+                    Ok(())
+                } else {
+                    Err(e)
+                }
+            })
     };
     if let Err(e) = &result {
-        tracing::debug!("failed to {} Win+L: {e}", if disabled { "take over" } else { "restore" });
+        tracing::debug!(
+            "failed to {} Win+L: {e}",
+            if disabled { "take over" } else { "restore" }
+        );
     }
     result.is_ok()
 }

@@ -13,8 +13,11 @@ struct CompiledRule {
 
 impl CompiledRule {
     fn matches(&self, info: &WindowInfo) -> bool {
-        let check = |re: &Option<Regex>, value: &str| re.as_ref().is_none_or(|re| re.is_match(value));
-        check(&self.exe, &info.exe) && check(&self.class, &info.class) && check(&self.title, &info.title)
+        let check =
+            |re: &Option<Regex>, value: &str| re.as_ref().is_none_or(|re| re.is_match(value));
+        check(&self.exe, &info.exe)
+            && check(&self.class, &info.class)
+            && check(&self.title, &info.title)
     }
 }
 
@@ -46,7 +49,10 @@ impl Rules {
             .enumerate()
             .map(|(i, rule)| {
                 if rule.exe.is_none() && rule.class.is_none() && rule.title.is_none() {
-                    return Err(ConfigError::Rule(i + 1, "needs at least one of exe, class, title".into()));
+                    return Err(ConfigError::Rule(
+                        i + 1,
+                        "needs at least one of exe, class, title".into(),
+                    ));
                 }
                 Ok(CompiledRule {
                     exe: compile(i, &rule.exe)?,
@@ -78,13 +84,21 @@ mod tests {
     use super::*;
 
     fn info(exe: &str, class: &str, title: &str) -> WindowInfo {
-        WindowInfo { exe: exe.into(), class: class.into(), title: title.into() }
+        WindowInfo {
+            exe: exe.into(),
+            class: class.into(),
+            title: title.into(),
+        }
     }
 
     #[test]
     fn matches_all_given_fields() {
         let rules = Rules::compile(&[
-            Rule { exe: Some("^spotify\\.exe$".into()), workspace: Some(9), ..Rule::default() },
+            Rule {
+                exe: Some("^spotify\\.exe$".into()),
+                workspace: Some(9),
+                ..Rule::default()
+            },
             Rule {
                 exe: Some("firefox".into()),
                 title: Some("Picture-in-Picture".into()),
@@ -93,21 +107,49 @@ mod tests {
             },
         ])
         .unwrap();
-        assert_eq!(rules.resolve(&info("Spotify.exe", "x", "y")).workspace, Some(9));
+        assert_eq!(
+            rules.resolve(&info("Spotify.exe", "x", "y")).workspace,
+            Some(9)
+        );
         let decor = Rules::compile(&[Rule {
             class: Some("^Notepad$".into()),
             decorations: Some(true),
             ..Rule::default()
         }])
         .unwrap();
-        assert_eq!(decor.resolve(&info("notepad.exe", "Notepad", "x")).decorations, Some(true));
-        assert_eq!(rules.resolve(&info("firefox.exe", "x", "Picture-in-Picture")).float, Some(true));
-        assert_eq!(rules.resolve(&info("firefox.exe", "x", "Mozilla")), RuleOutcome::default());
+        assert_eq!(
+            decor
+                .resolve(&info("notepad.exe", "Notepad", "x"))
+                .decorations,
+            Some(true)
+        );
+        assert_eq!(
+            rules
+                .resolve(&info("firefox.exe", "x", "Picture-in-Picture"))
+                .float,
+            Some(true)
+        );
+        assert_eq!(
+            rules.resolve(&info("firefox.exe", "x", "Mozilla")),
+            RuleOutcome::default()
+        );
     }
 
     #[test]
     fn rejects_bad_rules() {
-        assert!(Rules::compile(&[Rule { float: Some(true), ..Rule::default() }]).is_err());
-        assert!(Rules::compile(&[Rule { exe: Some("(".into()), ..Rule::default() }]).is_err());
+        assert!(
+            Rules::compile(&[Rule {
+                float: Some(true),
+                ..Rule::default()
+            }])
+            .is_err()
+        );
+        assert!(
+            Rules::compile(&[Rule {
+                exe: Some("(".into()),
+                ..Rule::default()
+            }])
+            .is_err()
+        );
     }
 }

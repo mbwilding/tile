@@ -11,7 +11,13 @@ pub struct Monocle {
 }
 
 impl Layout for Monocle {
-    fn insert(&mut self, id: WindowId, _focused: Option<WindowId>, _area: Rect, _s: &LayoutSettings) {
+    fn insert(
+        &mut self,
+        id: WindowId,
+        _focused: Option<WindowId>,
+        _area: Rect,
+        _s: &LayoutSettings,
+    ) {
         self.windows.push(id);
     }
 
@@ -25,7 +31,14 @@ impl Layout for Monocle {
 
     fn arrange(&mut self, area: Rect, _focused: Option<WindowId>, s: &LayoutSettings) -> Vec<Tile> {
         let rect = area.shrink(s.gaps_out);
-        self.windows.iter().map(|id| Tile { id: *id, rect, visible: true }).collect()
+        self.windows
+            .iter()
+            .map(|id| Tile {
+                id: *id,
+                rect,
+                visible: true,
+            })
+            .collect()
     }
 
     fn swap(&mut self, a: WindowId, b: WindowId) {
@@ -44,7 +57,11 @@ impl Layout for Monocle {
         if len < 2 {
             return None;
         }
-        let next = if dir.is_backward() { (pos + len - 1) % len } else { (pos + 1) % len };
+        let next = if dir.is_backward() {
+            (pos + len - 1) % len
+        } else {
+            (pos + 1) % len
+        };
         Some(self.windows[next])
     }
 }

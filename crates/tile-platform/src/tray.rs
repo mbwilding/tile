@@ -108,7 +108,11 @@ impl Tray {
             .name("tray".into())
             .spawn(move || run(&tx, &stop, &pause_state))
             .expect("spawn tray thread");
-        Self { shutdown, paused, thread: Some(thread) }
+        Self {
+            shutdown,
+            paused,
+            thread: Some(thread),
+        }
     }
 
     /// Reflects the pause state in the menu check mark.
@@ -125,7 +129,11 @@ impl Tray {
     }
 }
 
-fn run(tx: &mpsc::UnboundedSender<TrayEvent>, shutdown: &Arc<AtomicBool>, paused: &Arc<AtomicBool>) {
+fn run(
+    tx: &mpsc::UnboundedSender<TrayEvent>,
+    shutdown: &Arc<AtomicBool>,
+    paused: &Arc<AtomicBool>,
+) {
     let wnd = gui::WindowMain::new(gui::WindowMainOpts {
         title: "Tile",
         class_name: "tile-message-window",
@@ -146,7 +154,8 @@ fn run(tx: &mpsc::UnboundedSender<TrayEvent>, shutdown: &Arc<AtomicBool>, paused
     });
 
     wnd.on().wm_timer(POLL_TIMER, {
-        let (state, tx, shutdown, paused) = (state.clone(), tx.clone(), shutdown.clone(), paused.clone());
+        let (state, tx, shutdown, paused) =
+            (state.clone(), tx.clone(), shutdown.clone(), paused.clone());
         move || {
             if shutdown.load(Ordering::Relaxed) {
                 state.borrow_mut().take();
@@ -154,7 +163,9 @@ fn run(tx: &mpsc::UnboundedSender<TrayEvent>, shutdown: &Arc<AtomicBool>, paused
                 return Ok(());
             }
             let state = state.borrow();
-            let Some((_, items)) = state.as_ref() else { return Ok(()) };
+            let Some((_, items)) = state.as_ref() else {
+                return Ok(());
+            };
             while let Ok(event) = MenuEvent::receiver().try_recv() {
                 let mapped = if event.id == *items.pause.id() {
                     Some(TrayEvent::TogglePause)

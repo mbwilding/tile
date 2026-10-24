@@ -30,8 +30,12 @@ pub const SOCKET_NAME: &str = "tile.sock";
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Request {
     /// Run a dispatcher, e.g. `workspace 3`.
-    Dispatch { command: String },
-    Query { what: Query },
+    Dispatch {
+        command: String,
+    },
+    Query {
+        what: Query,
+    },
     /// Stream [`Event`]s until the client disconnects.
     Subscribe,
 }
@@ -60,9 +64,17 @@ pub enum Response {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Event {
-    Workspace { id: u8 },
-    ActiveWindow { id: Option<isize>, title: Option<String>, exe: Option<String> },
-    Layout { layout: LayoutKind },
+    Workspace {
+        id: u8,
+    },
+    ActiveWindow {
+        id: Option<isize>,
+        title: Option<String>,
+        exe: Option<String>,
+    },
+    Layout {
+        layout: LayoutKind,
+    },
 }
 
 /// A request received by the server, with a channel for the responses.
@@ -145,7 +157,9 @@ async fn handle(conn: Stream, tx: mpsc::UnboundedSender<Incoming>) -> io::Result
             }
         }
         Err(e) => {
-            let _ = reply.send(Response::Error { message: format!("bad request: {e}") });
+            let _ = reply.send(Response::Error {
+                message: format!("bad request: {e}"),
+            });
         }
     }
     while let Some(response) = replies.recv().await {
@@ -167,7 +181,9 @@ impl Client {
         let mut json = serde_json::to_string(request).map_err(io::Error::other)?;
         json.push('\n');
         (&conn).write_all(json.as_bytes()).await?;
-        Ok(Self { reader: BufReader::new(conn) })
+        Ok(Self {
+            reader: BufReader::new(conn),
+        })
     }
 
     /// The next response, or `None` once the daemon closes the connection.
@@ -176,7 +192,9 @@ impl Client {
         if self.reader.read_line(&mut line).await? == 0 {
             return Ok(None);
         }
-        serde_json::from_str(&line).map(Some).map_err(io::Error::other)
+        serde_json::from_str(&line)
+            .map(Some)
+            .map_err(io::Error::other)
     }
 }
 
@@ -186,9 +204,18 @@ mod tests {
 
     #[test]
     fn request_json_shape() {
-        let json = serde_json::to_string(&Request::Dispatch { command: "workspace 2".into() }).unwrap();
+        let json = serde_json::to_string(&Request::Dispatch {
+            command: "workspace 2".into(),
+        })
+        .unwrap();
         assert_eq!(json, r#"{"type":"dispatch","command":"workspace 2"}"#);
-        let query: Request = serde_json::from_str(r#"{"type":"query","what":"active_window"}"#).unwrap();
-        assert!(matches!(query, Request::Query { what: Query::ActiveWindow }));
+        let query: Request =
+            serde_json::from_str(r#"{"type":"query","what":"active_window"}"#).unwrap();
+        assert!(matches!(
+            query,
+            Request::Query {
+                what: Query::ActiveWindow
+            }
+        ));
     }
 }

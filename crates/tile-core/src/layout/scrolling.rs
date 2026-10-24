@@ -27,7 +27,12 @@ struct Column {
 
 impl Column {
     fn new(id: WindowId, proportion: f32) -> Self {
-        Self { windows: vec![id], weights: vec![1.0], proportion, active: 0 }
+        Self {
+            windows: vec![id],
+            weights: vec![1.0],
+            proportion,
+            active: 0,
+        }
     }
 
     fn push(&mut self, id: WindowId) {
@@ -46,14 +51,17 @@ impl Column {
 
 impl Scrolling {
     fn locate(&self, id: WindowId) -> Option<(usize, usize)> {
-        self.columns.iter().enumerate().find_map(|(c, col)| {
-            col.windows.iter().position(|w| *w == id).map(|r| (c, r))
-        })
+        self.columns
+            .iter()
+            .enumerate()
+            .find_map(|(c, col)| col.windows.iter().position(|w| *w == id).map(|r| (c, r)))
     }
 
     fn drop_empty(&mut self) {
         self.columns.retain(|c| !c.windows.is_empty());
-        self.focused_column = self.focused_column.min(self.columns.len().saturating_sub(1));
+        self.focused_column = self
+            .focused_column
+            .min(self.columns.len().saturating_sub(1));
     }
 
     pub fn set_proportion(&mut self, id: WindowId, proportion: f32) {
@@ -63,7 +71,9 @@ impl Scrolling {
     }
 
     pub fn cycle_proportion(&mut self, id: WindowId, s: &LayoutSettings) {
-        let Some((c, _)) = self.locate(id) else { return };
+        let Some((c, _)) = self.locate(id) else {
+            return;
+        };
         let current = self.columns[c].proportion;
         let next = s
             .scrolling_presets
@@ -77,7 +87,9 @@ impl Scrolling {
 
     /// Moves `id` into the neighbouring column in `dir`.
     pub fn consume(&mut self, id: WindowId, dir: Direction) {
-        let Some((c, r)) = self.locate(id) else { return };
+        let Some((c, r)) = self.locate(id) else {
+            return;
+        };
         let target = match dir {
             Direction::Left if c > 0 => c - 1,
             Direction::Right if c + 1 < self.columns.len() => c + 1,
@@ -95,7 +107,9 @@ impl Scrolling {
     }
 
     fn expel_to(&mut self, id: WindowId, dir: Direction, proportion: f32) {
-        let Some((c, r)) = self.locate(id) else { return };
+        let Some((c, r)) = self.locate(id) else {
+            return;
+        };
         if self.columns[c].windows.len() < 2 {
             return;
         }
@@ -148,7 +162,8 @@ impl Layout for Scrolling {
         let at = focused
             .and_then(|f| self.locate(f))
             .map_or(self.columns.len(), |(c, _)| c + 1);
-        self.columns.insert(at, Column::new(id, s.scrolling_proportion));
+        self.columns
+            .insert(at, Column::new(id, s.scrolling_proportion));
         self.focused_column = at;
     }
 
@@ -163,7 +178,10 @@ impl Layout for Scrolling {
     }
 
     fn windows(&self) -> Vec<WindowId> {
-        self.columns.iter().flat_map(|c| c.windows.iter().copied()).collect()
+        self.columns
+            .iter()
+            .flat_map(|c| c.windows.iter().copied())
+            .collect()
     }
 
     fn arrange(&mut self, area: Rect, focused: Option<WindowId>, s: &LayoutSettings) -> Vec<Tile> {
@@ -188,24 +206,27 @@ impl Layout for Scrolling {
             let rect = Rect::new(usable.x + x - self.offset, usable.y, *w, usable.h);
             let visible = rect.x >= usable.x - 1 && rect.right() <= usable.right() + 1;
             let parts = rect.split_weighted(Axis::Vertical, &col.weights, s.gaps_in);
-            tiles.extend(
-                parts
-                    .into_iter()
-                    .zip(&col.windows)
-                    .map(|(rect, id)| Tile { id: *id, rect, visible }),
-            );
+            tiles.extend(parts.into_iter().zip(&col.windows).map(|(rect, id)| Tile {
+                id: *id,
+                rect,
+                visible,
+            }));
         }
         tiles
     }
 
     fn swap(&mut self, a: WindowId, b: WindowId) {
-        let (Some((ca, ra)), Some((cb, rb))) = (self.locate(a), self.locate(b)) else { return };
+        let (Some((ca, ra)), Some((cb, rb))) = (self.locate(a), self.locate(b)) else {
+            return;
+        };
         self.columns[ca].windows[ra] = b;
         self.columns[cb].windows[rb] = a;
     }
 
     fn resize(&mut self, id: WindowId, dx: i32, dy: i32, area: Rect, s: &LayoutSettings) {
-        let Some((c, r)) = self.locate(id) else { return };
+        let Some((c, r)) = self.locate(id) else {
+            return;
+        };
         let usable = area.shrink(s.gaps_out);
         let col = &mut self.columns[c];
         col.proportion = (col.proportion + ratio_of(dx, usable.w)).clamp(MIN_PROPORTION, 1.0);
@@ -233,11 +254,17 @@ impl Layout for Scrolling {
     }
 
     fn move_window(&mut self, id: WindowId, dir: Direction, _tiles: &[Tile]) -> bool {
-        let Some((c, r)) = self.locate(id) else { return false };
+        let Some((c, r)) = self.locate(id) else {
+            return false;
+        };
         match dir {
             Direction::Up | Direction::Down => {
                 let col = &mut self.columns[c];
-                let target = if dir == Direction::Up { r.checked_sub(1) } else { Some(r + 1) };
+                let target = if dir == Direction::Up {
+                    r.checked_sub(1)
+                } else {
+                    Some(r + 1)
+                };
                 match target.filter(|t| *t < col.windows.len()) {
                     Some(t) => {
                         col.windows.swap(r, t);
@@ -253,7 +280,11 @@ impl Layout for Scrolling {
                     self.expel_to(id, dir, self.columns[c].proportion);
                     return true;
                 }
-                let target = if dir == Direction::Left { c.checked_sub(1) } else { Some(c + 1) };
+                let target = if dir == Direction::Left {
+                    c.checked_sub(1)
+                } else {
+                    Some(c + 1)
+                };
                 match target.filter(|t| *t < self.columns.len()) {
                     Some(t) => {
                         self.columns.swap(c, t);
@@ -325,7 +356,10 @@ mod tests {
         assert_eq!(tiles.len(), 3);
         assert_eq!(tiles[1].rect, Rect::new(500, 0, 500, 400));
         assert_eq!(tiles[2].rect, Rect::new(500, 400, 500, 400));
-        assert_eq!(l.neighbor(WindowId(3), Direction::Up, &tiles), Some(WindowId(2)));
+        assert_eq!(
+            l.neighbor(WindowId(3), Direction::Up, &tiles),
+            Some(WindowId(2))
+        );
 
         l.expel(WindowId(3), &s);
         assert_eq!(l.columns.len(), 3);

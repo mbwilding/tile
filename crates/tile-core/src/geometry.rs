@@ -185,9 +185,7 @@ pub fn nearest_in_direction<T: Copy>(
                 return None;
             }
             let overlap = match dir.axis() {
-                Axis::Horizontal => {
-                    rect.y.max(from.y) < rect.bottom().min(from.bottom())
-                }
+                Axis::Horizontal => rect.y.max(from.y) < rect.bottom().min(from.bottom()),
                 Axis::Vertical => rect.x.max(from.x) < rect.right().min(from.right()),
             };
             let (primary, secondary) = match dir.axis() {
@@ -195,7 +193,11 @@ pub fn nearest_in_direction<T: Copy>(
                 Axis::Vertical => ((cy - fy).abs(), (cx - fx).abs()),
             };
             // Overlapping candidates always win over non-overlapping ones.
-            let score = (i64::from(!overlap), i64::from(primary), i64::from(secondary));
+            let score = (
+                i64::from(!overlap),
+                i64::from(primary),
+                i64::from(secondary),
+            );
             Some((score, id))
         })
         .min_by_key(|(score, _)| *score)
@@ -228,7 +230,13 @@ mod tests {
             (1, Rect::new(110, 500, 100, 100)),
             (2, Rect::new(300, 0, 100, 100)),
         ];
-        assert_eq!(nearest_in_direction(&from, Direction::Right, candidates), Some(2));
-        assert_eq!(nearest_in_direction(&from, Direction::Left, candidates), None);
+        assert_eq!(
+            nearest_in_direction(&from, Direction::Right, candidates),
+            Some(2)
+        );
+        assert_eq!(
+            nearest_in_direction(&from, Direction::Left, candidates),
+            None
+        );
     }
 }

@@ -256,15 +256,30 @@ mod tests {
 
     #[test]
     fn accepts_long_directions_and_case() {
-        assert_eq!("MoveFocus Left".parse(), Ok(Command::MoveFocus(Direction::Left)));
+        assert_eq!(
+            "MoveFocus Left".parse(),
+            Ok(Command::MoveFocus(Direction::Left))
+        );
     }
 
     #[test]
     fn rejects_bad_input() {
         assert!(matches!("".parse::<Command>(), Err(ParseError::Empty)));
-        assert!(matches!("nope".parse::<Command>(), Err(ParseError::Unknown(_))));
-        assert!(matches!("workspace 0".parse::<Command>(), Err(ParseError::BadArg(..))));
-        assert!(matches!("movefocus".parse::<Command>(), Err(ParseError::MissingArg(..))));
-        assert!(matches!("resizeactive 1".parse::<Command>(), Err(ParseError::BadArg(..))));
+        assert!(matches!(
+            "nope".parse::<Command>(),
+            Err(ParseError::Unknown(_))
+        ));
+        assert!(matches!(
+            "workspace 0".parse::<Command>(),
+            Err(ParseError::BadArg(..))
+        ));
+        assert!(matches!(
+            "movefocus".parse::<Command>(),
+            Err(ParseError::MissingArg(..))
+        ));
+        assert!(matches!(
+            "resizeactive 1".parse::<Command>(),
+            Err(ParseError::BadArg(..))
+        ));
     }
 }

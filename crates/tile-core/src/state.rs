@@ -39,7 +39,10 @@ pub struct MonitorInfo {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Effect {
     /// Move and resize a window so its visible frame matches `rect`.
-    Place { id: WindowId, rect: Rect },
+    Place {
+        id: WindowId,
+        rect: Rect,
+    },
     Show(WindowId),
     Hide(WindowId),
     Focus(WindowId),
@@ -230,7 +233,11 @@ impl State {
     }
 
     /// Applies new settings from a config reload.
-    pub fn set_settings(&mut self, settings: LayoutSettings, default_layout: LayoutKind) -> Vec<Effect> {
+    pub fn set_settings(
+        &mut self,
+        settings: LayoutSettings,
+        default_layout: LayoutKind,
+    ) -> Vec<Effect> {
         self.settings = settings;
         self.default_layout = default_layout;
         self.sync()
@@ -250,7 +257,10 @@ impl State {
             .get(&ws)
             .and_then(|w| self.monitor_index(w.monitor))
             .unwrap_or(self.focused_monitor);
-        self.monitors.get(index).map(|m| m.info.work_area).unwrap_or_default()
+        self.monitors
+            .get(index)
+            .map(|m| m.info.work_area)
+            .unwrap_or_default()
     }
 
     fn ensure_workspace(&mut self, n: u8, monitor: MonitorId) {
@@ -301,7 +311,10 @@ impl State {
             if let Some(w) = self.workspaces.get_mut(&ws) {
                 w.monitor = info.id;
             }
-            self.monitors.push(Monitor { info, workspace: ws });
+            self.monitors.push(Monitor {
+                info,
+                workspace: ws,
+            });
         }
         let fallback = self.monitors[0].info.id;
         for ws in self.workspaces.values_mut() {
@@ -315,7 +328,15 @@ impl State {
 
     /// Recomputes every window's placement and visibility.
     pub fn sync(&mut self) -> Vec<Effect> {
-        let Self { monitors, workspaces, windows, hidden, focused, settings, .. } = self;
+        let Self {
+            monitors,
+            workspaces,
+            windows,
+            hidden,
+            focused,
+            settings,
+            ..
+        } = self;
         let mut hides = Vec::new();
         let mut places = Vec::new();
         let mut shows = Vec::new();
@@ -333,7 +354,11 @@ impl State {
                 .or_else(|| ws.history.last().copied());
             let mut tiles = ws.layout.arrange(monitor.info.work_area, focus, settings);
             tiles.extend(ws.floating.iter().filter_map(|id| {
-                windows.get(id).map(|m| Tile { id: *id, rect: m.float_rect, visible: true })
+                windows.get(id).map(|m| Tile {
+                    id: *id,
+                    rect: m.float_rect,
+                    visible: true,
+                })
             }));
             for tile in tiles {
                 if tile.visible {
@@ -362,7 +387,9 @@ impl State {
     }
 
     fn focus_window(&mut self, id: WindowId) -> Vec<Effect> {
-        let Some(n) = self.windows.get(&id).map(|m| m.workspace) else { return Vec::new() };
+        let Some(n) = self.windows.get(&id).map(|m| m.workspace) else {
+            return Vec::new();
+        };
         if let Some(ws) = self.workspaces.get_mut(&n) {
             ws.touch(id);
         }
@@ -379,7 +406,9 @@ impl State {
     }
 
     fn focus_workspace(&mut self, n: u8) -> Vec<Effect> {
-        let Some(fallback) = self.focused_monitor_id() else { return Vec::new() };
+        let Some(fallback) = self.focused_monitor_id() else {
+            return Vec::new();
+        };
         self.ensure_workspace(n, fallback);
         let owner = self.workspaces[&n].monitor;
         let index = self.monitor_index(owner).unwrap_or(self.focused_monitor);
@@ -396,7 +425,9 @@ impl State {
     }
 
     fn focus_monitor(&mut self, dir: Direction) -> Vec<Effect> {
-        let Some(current) = self.monitors.get(self.focused_monitor) else { return Vec::new() };
+        let Some(current) = self.monitors.get(self.focused_monitor) else {
+            return Vec::new();
+        };
         let from = current.info.rect;
         let others = self
             .monitors
@@ -404,7 +435,9 @@ impl State {
             .enumerate()
             .filter(|(i, _)| *i != self.focused_monitor)
             .map(|(i, m)| (i, m.info.rect));
-        let Some(index) = nearest_in_direction(&from, dir, others) else { return Vec::new() };
+        let Some(index) = nearest_in_direction(&from, dir, others) else {
+            return Vec::new();
+        };
         let n = self.monitors[index].workspace;
         self.focus_workspace(n)
     }
@@ -434,8 +467,12 @@ impl State {
     /// Adds a managed window to workspace `n`, next to that workspace's focused window.
     fn attach(&mut self, id: WindowId, n: u8) {
         let area = self.area_of(n);
-        let Some(m) = self.windows.get_mut(&id) else { return };
-        let Some(ws) = self.workspaces.get_mut(&n) else { return };
+        let Some(m) = self.windows.get_mut(&id) else {
+            return;
+        };
+        let Some(ws) = self.workspaces.get_mut(&n) else {
+            return;
+        };
         m.workspace = n;
         if m.floating {
             ws.floating.push(id);
@@ -454,7 +491,12 @@ impl State {
     }
 
     /// Starts managing a window. Returns no effects if it was already managed.
-    pub fn window_opened(&mut self, id: WindowId, info: WindowInfo, opts: ManageOptions) -> Vec<Effect> {
+    pub fn window_opened(
+        &mut self,
+        id: WindowId,
+        info: WindowInfo,
+        opts: ManageOptions,
+    ) -> Vec<Effect> {
         if self.windows.contains_key(&id) || self.monitors.is_empty() {
             return Vec::new();
         }
@@ -466,7 +508,12 @@ impl State {
         self.ensure_workspace(n, self.monitors[monitor].info.id);
         self.windows.insert(
             id,
-            Managed { info, workspace: n, floating: opts.floating, float_rect: opts.rect },
+            Managed {
+                info,
+                workspace: n,
+                floating: opts.floating,
+                float_rect: opts.rect,
+            },
         );
         self.attach(id, n);
         if opts.focus && self.showing(n).is_some() {
@@ -477,7 +524,9 @@ impl State {
 
     /// Stops managing a window (destroyed, hidden by its app, or became unmanageable).
     pub fn window_closed(&mut self, id: WindowId) -> Vec<Effect> {
-        let Some(n) = self.detach(id) else { return Vec::new() };
+        let Some(n) = self.detach(id) else {
+            return Vec::new();
+        };
         self.windows.remove(&id);
         self.hidden.remove(&id);
         if self.focused == Some(id) {
@@ -514,7 +563,9 @@ impl State {
     }
 
     pub fn window_minimized(&mut self, id: WindowId) -> Vec<Effect> {
-        let Some(n) = self.detach(id) else { return Vec::new() };
+        let Some(n) = self.detach(id) else {
+            return Vec::new();
+        };
         if let Some(ws) = self.workspaces.get_mut(&n) {
             ws.minimized.push(id);
         }
@@ -525,8 +576,12 @@ impl State {
     }
 
     pub fn window_restored(&mut self, id: WindowId) -> Vec<Effect> {
-        let Some(n) = self.windows.get(&id).map(|m| m.workspace) else { return Vec::new() };
-        let Some(ws) = self.workspaces.get_mut(&n) else { return Vec::new() };
+        let Some(n) = self.windows.get(&id).map(|m| m.workspace) else {
+            return Vec::new();
+        };
+        let Some(ws) = self.workspaces.get_mut(&n) else {
+            return Vec::new();
+        };
         if !ws.minimized.contains(&id) {
             return Vec::new();
         }
@@ -537,7 +592,9 @@ impl State {
 
     /// The user finished dragging or resizing a window with the mouse.
     pub fn window_moved(&mut self, id: WindowId, rect: Rect, cursor: (i32, i32)) -> Vec<Effect> {
-        let Some(m) = self.windows.get(&id) else { return Vec::new() };
+        let Some(m) = self.windows.get(&id) else {
+            return Vec::new();
+        };
         let n = m.workspace;
         let floating = m.floating;
         let target_monitor = self
@@ -563,7 +620,9 @@ impl State {
 
         let area = self.area_of(n);
         let settings = self.settings.clone();
-        let Some(ws) = self.workspaces.get_mut(&n) else { return Vec::new() };
+        let Some(ws) = self.workspaces.get_mut(&n) else {
+            return Vec::new();
+        };
         let tiles = ws.layout.arrange(area, Some(id), &settings);
         let under = tiles
             .iter()
@@ -630,16 +689,27 @@ impl State {
     }
 
     fn toggle_floating(&mut self) -> Vec<Effect> {
-        let Some((id, n)) = self.active() else { return Vec::new() };
+        let Some((id, n)) = self.active() else {
+            return Vec::new();
+        };
         let float_rect = self.windows[&id].float_rect;
         let centered = self.centered(float_rect, n);
         let area = self.area_of(n);
-        let Some(m) = self.windows.get_mut(&id) else { return Vec::new() };
-        let Some(ws) = self.workspaces.get_mut(&n) else { return Vec::new() };
+        let Some(m) = self.windows.get_mut(&id) else {
+            return Vec::new();
+        };
+        let Some(ws) = self.workspaces.get_mut(&n) else {
+            return Vec::new();
+        };
         if m.floating {
             m.floating = false;
             ws.floating.retain(|w| *w != id);
-            let near = ws.history.iter().rev().copied().find(|w| ws.layout.contains(*w));
+            let near = ws
+                .history
+                .iter()
+                .rev()
+                .copied()
+                .find(|w| ws.layout.contains(*w));
             ws.layout.insert(id, near, area, &self.settings);
         } else {
             m.floating = true;
@@ -653,16 +723,26 @@ impl State {
     }
 
     fn toggle_fullscreen(&mut self) -> Vec<Effect> {
-        let Some((id, n)) = self.active() else { return Vec::new() };
-        let Some(ws) = self.workspaces.get_mut(&n) else { return Vec::new() };
-        ws.fullscreen = if ws.fullscreen == Some(id) { None } else { Some(id) };
+        let Some((id, n)) = self.active() else {
+            return Vec::new();
+        };
+        let Some(ws) = self.workspaces.get_mut(&n) else {
+            return Vec::new();
+        };
+        ws.fullscreen = if ws.fullscreen == Some(id) {
+            None
+        } else {
+            Some(id)
+        };
         let mut effects = self.sync();
         effects.push(Effect::Focus(id));
         effects
     }
 
     fn move_focus(&mut self, dir: Direction) -> Vec<Effect> {
-        let Some(n) = self.focused_workspace() else { return Vec::new() };
+        let Some(n) = self.focused_workspace() else {
+            return Vec::new();
+        };
         let current = self.active().filter(|(_, ws)| *ws == n).map(|(id, _)| id);
         let Some(id) = current else {
             // Nothing focused here (e.g. the desktop has focus): start from a window.
@@ -672,22 +752,35 @@ impl State {
             };
         };
         // A fullscreen window owns its workspace; focus can only leave to another monitor.
-        if self.workspaces.get(&n).is_some_and(|ws| ws.fullscreen.is_some()) {
+        if self
+            .workspaces
+            .get(&n)
+            .is_some_and(|ws| ws.fullscreen.is_some())
+        {
             return self.focus_monitor(dir);
         }
         let area = self.area_of(n);
         let settings = self.settings.clone();
-        let Some(ws) = self.workspaces.get_mut(&n) else { return Vec::new() };
+        let Some(ws) = self.workspaces.get_mut(&n) else {
+            return Vec::new();
+        };
         let mut tiles = ws.layout.arrange(area, Some(id), &settings);
         let target = if ws.floating.contains(&id) {
             tiles.extend(ws.floating.iter().filter_map(|f| {
-                self.windows.get(f).map(|m| Tile { id: *f, rect: m.float_rect, visible: true })
+                self.windows.get(f).map(|m| Tile {
+                    id: *f,
+                    rect: m.float_rect,
+                    visible: true,
+                })
             }));
             let from = self.windows[&id].float_rect;
             nearest_in_direction(
                 &from,
                 dir,
-                tiles.iter().filter(|t| t.visible && t.id != id).map(|t| (t.id, t.rect)),
+                tiles
+                    .iter()
+                    .filter(|t| t.visible && t.id != id)
+                    .map(|t| (t.id, t.rect)),
             )
         } else {
             ws.layout.neighbor(id, dir, &tiles)
@@ -700,12 +793,21 @@ impl State {
 
     /// Focuses the next / previous window of the focused workspace in layout order, wrapping.
     fn cycle(&mut self, forward: bool) -> Vec<Effect> {
-        let Some(n) = self.focused_workspace() else { return Vec::new() };
-        let Some(ws) = self.workspaces.get(&n) else { return Vec::new() };
+        let Some(n) = self.focused_workspace() else {
+            return Vec::new();
+        };
+        let Some(ws) = self.workspaces.get(&n) else {
+            return Vec::new();
+        };
         if ws.fullscreen.is_some() {
             return Vec::new();
         }
-        let order: Vec<WindowId> = ws.layout.windows().into_iter().chain(ws.floating.iter().copied()).collect();
+        let order: Vec<WindowId> = ws
+            .layout
+            .windows()
+            .into_iter()
+            .chain(ws.floating.iter().copied())
+            .collect();
         let current = self.active().filter(|(_, w)| *w == n).map(|(id, _)| id);
         let target = match current.and_then(|id| order.iter().position(|w| *w == id)) {
             Some(i) if forward => order.get((i + 1) % order.len()),
@@ -719,8 +821,14 @@ impl State {
     }
 
     fn move_window(&mut self, dir: Direction) -> Vec<Effect> {
-        let Some((id, n)) = self.active() else { return Vec::new() };
-        if self.workspaces.get(&n).is_some_and(|ws| ws.fullscreen.is_some()) {
+        let Some((id, n)) = self.active() else {
+            return Vec::new();
+        };
+        if self
+            .workspaces
+            .get(&n)
+            .is_some_and(|ws| ws.fullscreen.is_some())
+        {
             return Vec::new();
         }
         let area = self.area_of(n);
@@ -738,13 +846,19 @@ impl State {
             return self.sync();
         }
         let settings = self.settings.clone();
-        let Some(ws) = self.workspaces.get_mut(&n) else { return Vec::new() };
+        let Some(ws) = self.workspaces.get_mut(&n) else {
+            return Vec::new();
+        };
         let tiles = ws.layout.arrange(area, Some(id), &settings);
         if ws.layout.move_window(id, dir, &tiles) {
             return self.sync();
         }
-        let Some(from) = self.showing(n) else { return Vec::new() };
-        let Some(target) = self.monitor_in_direction(from, dir) else { return Vec::new() };
+        let Some(from) = self.showing(n) else {
+            return Vec::new();
+        };
+        let Some(target) = self.monitor_in_direction(from, dir) else {
+            return Vec::new();
+        };
         let dest = self.monitors[target].workspace;
         self.detach(id);
         self.attach(id, dest);
@@ -752,7 +866,9 @@ impl State {
     }
 
     fn resize_active(&mut self, dx: i32, dy: i32) -> Vec<Effect> {
-        let Some((id, n)) = self.active() else { return Vec::new() };
+        let Some((id, n)) = self.active() else {
+            return Vec::new();
+        };
         if self.is_floating(id) {
             if let Some(m) = self.windows.get_mut(&id) {
                 m.float_rect.w = (m.float_rect.w + dx).max(100);
@@ -769,11 +885,15 @@ impl State {
     }
 
     fn move_to_workspace(&mut self, n: u8, follow: bool) -> Vec<Effect> {
-        let Some((id, current)) = self.active() else { return Vec::new() };
+        let Some((id, current)) = self.active() else {
+            return Vec::new();
+        };
         if current == n {
             return Vec::new();
         }
-        let Some(monitor) = self.focused_monitor_id() else { return Vec::new() };
+        let Some(monitor) = self.focused_monitor_id() else {
+            return Vec::new();
+        };
         self.ensure_workspace(n, monitor);
         let old_area = self.area_of(current);
         let new_area = self.area_of(n);
@@ -787,14 +907,20 @@ impl State {
             return self.focus_workspace(n);
         }
         self.focused = None;
-        match self.workspaces.get(&current).and_then(Workspace::focus_candidate) {
+        match self
+            .workspaces
+            .get(&current)
+            .and_then(Workspace::focus_candidate)
+        {
             Some(next) => self.focus_window(next),
             None => self.sync(),
         }
     }
 
     fn set_layout(&mut self, kind: LayoutKind) -> Vec<Effect> {
-        let Some(n) = self.focused_workspace() else { return Vec::new() };
+        let Some(n) = self.focused_workspace() else {
+            return Vec::new();
+        };
         let area = self.area_of(n);
         if let Some(ws) = self.workspaces.get_mut(&n) {
             ws.layout = ws.layout.convert(kind, area, &self.settings);
@@ -803,10 +929,14 @@ impl State {
     }
 
     fn layout_specific(&mut self, command: &Command) -> Vec<Effect> {
-        let Some((id, n)) = self.active() else { return Vec::new() };
+        let Some((id, n)) = self.active() else {
+            return Vec::new();
+        };
         let area = self.area_of(n);
         let s = &self.settings;
-        let Some(ws) = self.workspaces.get_mut(&n) else { return Vec::new() };
+        let Some(ws) = self.workspaces.get_mut(&n) else {
+            return Vec::new();
+        };
         match (&mut ws.layout, command) {
             (LayoutState::Master(m), Command::SwapWithMaster) => m.swap_with_master(id, s),
             (LayoutState::Dwindle(d), Command::ToggleSplit) => d.toggle_split(id, area, s),
@@ -831,7 +961,8 @@ impl State {
                 exe: m.info.exe.clone(),
                 workspace: m.workspace,
                 floating: m.floating,
-                fullscreen: self.workspaces.get(&m.workspace).and_then(|w| w.fullscreen) == Some(*id),
+                fullscreen: self.workspaces.get(&m.workspace).and_then(|w| w.fullscreen)
+                    == Some(*id),
                 focused: self.focused == Some(*id),
                 hidden: self.hidden.contains(id),
             })
@@ -892,15 +1023,28 @@ mod tests {
     }
 
     fn state(monitors: usize) -> State {
-        let settings = LayoutSettings { gaps_in: 0, gaps_out: 0, ..LayoutSettings::default() };
+        let settings = LayoutSettings {
+            gaps_in: 0,
+            gaps_out: 0,
+            ..LayoutSettings::default()
+        };
         let mut s = State::new(settings, LayoutKind::Dwindle);
-        let infos = (0..monitors).map(|i| monitor(i as isize + 1, i as i32 * 1000)).collect();
+        let infos = (0..monitors)
+            .map(|i| monitor(i as isize + 1, i as i32 * 1000))
+            .collect();
         s.set_monitors(infos);
         s
     }
 
     fn open(s: &mut State, id: WindowId) -> Vec<Effect> {
-        s.window_opened(id, WindowInfo::default(), ManageOptions { focus: true, ..Default::default() })
+        s.window_opened(
+            id,
+            WindowInfo::default(),
+            ManageOptions {
+                focus: true,
+                ..Default::default()
+            },
+        )
     }
 
     fn placed(effects: &[Effect], id: WindowId) -> Option<Rect> {

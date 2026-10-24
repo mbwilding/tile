@@ -17,7 +17,9 @@ pub const SOCKET_NAME: &str = "tile-launcher.sock";
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum LaunchRequest {
     /// Run a command line, like the `exec` dispatcher.
-    Exec { command_line: String },
+    Exec {
+        command_line: String,
+    },
     Exit,
 }
 
@@ -46,7 +48,10 @@ pub struct LaunchServer(Listener);
 
 impl LaunchServer {
     pub fn bind() -> io::Result<Self> {
-        ListenerOptions::new().name(socket_name()?).create_tokio().map(Self)
+        ListenerOptions::new()
+            .name(socket_name()?)
+            .create_tokio()
+            .map(Self)
     }
 
     /// Waits for the next request, skipping connections that send nothing ([`is_running`]).
