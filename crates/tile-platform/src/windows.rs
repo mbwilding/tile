@@ -495,3 +495,23 @@ pub fn foreground() -> Option<isize> {
 pub fn cursor_pos() -> (i32, i32) {
     w::GetCursorPos().map(|p| (p.x, p.y)).unwrap_or_default()
 }
+
+/// Moves the pointer to `(x, y)` in physical screen pixels.
+pub fn set_cursor_pos((x, y): (i32, i32)) {
+    if let Err(e) = w::SetCursorPos(x, y) {
+        tracing::debug!("SetCursorPos failed: {e}");
+    }
+}
+
+/// A mouse button (left, right, middle or a side button) is held down.
+pub fn mouse_button_down() -> bool {
+    [
+        co::VK::LBUTTON,
+        co::VK::RBUTTON,
+        co::VK::MBUTTON,
+        co::VK::XBUTTON1,
+        co::VK::XBUTTON2,
+    ]
+    .into_iter()
+    .any(w::GetAsyncKeyState)
+}

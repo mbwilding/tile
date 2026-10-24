@@ -86,16 +86,17 @@ tray icon or `tilectl dispatch exit`; Ctrl-C in the terminal only stops `cargo`.
 
 | Keys | Action |
 | --- | --- |
-| `Win+Enter` | open Windows Terminal |
+| `Win+T` | open Windows Terminal |
+| `Win+Enter` | make the window the main one (swap with master) |
 | `Win+Q` | close window |
-| `Win+V` / `Win+F` | toggle floating / fullscreen |
+| `Win+F` / `Win+O` | toggle floating / fullscreen |
 | `Win+Space` | next layout |
 | `Win+Arrows` / `Win+H/J/K/L` | move focus |
 | `Win+Shift+Arrows` / `Win+Shift+H/J/K/L` | move window (to the next monitor at the edge) |
 | `Win+Alt+Arrows` / `Win+Alt+H/J/K/L` | resize |
 | `Win+1..9` / `Win+Shift+1..9` | switch to / move window to workspace |
 | `Win+,` / `Win+.` | focus monitor left / right |
-| `Win+M` / `Win+T` | swap with master / flip the dwindle split |
+| `Win+S` | flip the dwindle split |
 | `Win+R` / `Win+C` | scrolling: next column width / center column |
 | `Win+[` / `Win+]` / `Win+\` | scrolling: merge into left / right column, split out |
 | `Win+Ctrl+Shift+Left/Right` | move window to previous / next virtual desktop |
@@ -128,6 +129,10 @@ decorations = false           # keep title bars on tiled windows
 override_win_l = true         # take over Win+L (see below)
 disable_click_to_do = true    # switch off Click to Do (see below)
 
+[cursor]
+warp = true                   # move the pointer to the middle of a monitor a keybind focuses
+hide_on_key = true            # typing hides the pointer until the mouse moves or clicks
+
 [animations]
 enabled = true
 duration_ms = 180
@@ -156,7 +161,7 @@ capslock = "overload(nav, esc)"
 h = "left"
 
 [binds]
-"super+enter" = "exec wt.exe"
+"super+t" = "exec wt.exe"
 "super+shift+q" = "killactive"
 
 [[rules]]
@@ -190,7 +195,7 @@ letters, digits, `f1`..`f24`, `left`/`right`/`up`/`down`, `space`, `tab`, `enter
 | `movetoworkspacesilent <n>` | move the window to workspace `n` and stay |
 | `focusmonitor <l\|r\|u\|d>` | focus the next monitor that way |
 | `layout <name>` / `cyclelayout` | set / step through the workspace's layout |
-| `swapwithmaster` | master: swap the window with the master |
+| `swapwithmaster` | master / dwindle: swap the window with the main one (or the main one with the next) |
 | `togglesplit` | dwindle: flip the direction of the window's split |
 | `scroller_proportion <0.05-1.0>` | scrolling: set the column's width |
 | `cycleproportion` | scrolling: next width from `proportion_presets` |

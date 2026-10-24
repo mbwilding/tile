@@ -8,6 +8,7 @@ use tile_core::{LayoutKind, LayoutSettings, animation::Bezier, layout::CenterMod
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
     pub general: General,
+    pub cursor: Cursor,
     pub animations: Animations,
     pub dwindle: Dwindle,
     pub master: Master,
@@ -20,10 +21,11 @@ pub struct Config {
 
 /// Keybinds used when the config has no `[binds]` table.
 const DEFAULT_BINDS: &[(&str, &str)] = &[
-    ("super+enter", "exec wt.exe"),
+    ("super+t", "exec wt.exe"),
+    ("super+enter", "swapwithmaster"),
     ("super+q", "killactive"),
-    ("super+v", "togglefloating"),
-    ("super+f", "fullscreen"),
+    ("super+f", "togglefloating"),
+    ("super+o", "fullscreen"),
     ("super+space", "cyclelayout"),
     ("super+left", "movefocus l"),
     ("super+right", "movefocus r"),
@@ -55,8 +57,7 @@ const DEFAULT_BINDS: &[(&str, &str)] = &[
     ("super+ctrl+p", "pin"),
     ("super+comma", "focusmonitor l"),
     ("super+period", "focusmonitor r"),
-    ("super+m", "swapwithmaster"),
-    ("super+t", "togglesplit"),
+    ("super+s", "togglesplit"),
     ("super+r", "cycleproportion"),
     ("super+c", "centercolumn"),
     ("super+bracketleft", "consumewindow l"),
@@ -108,6 +109,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             general: General::default(),
+            cursor: Cursor::default(),
             animations: Animations::default(),
             dwindle: Dwindle::default(),
             master: Master::default(),
@@ -176,6 +178,26 @@ impl Default for General {
             decorations: false,
             override_win_l: true,
             disable_click_to_do: true,
+        }
+    }
+}
+
+/// The mouse pointer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Cursor {
+    /// Move the pointer to the middle of a monitor when a keybind or dispatch focuses it.
+    pub warp: bool,
+    /// Hide the pointer when a key is typed, until the mouse moves or clicks, or another
+    /// monitor is focused. Modifiers on their own and keybinds don't count as typing.
+    pub hide_on_key: bool,
+}
+
+impl Default for Cursor {
+    fn default() -> Self {
+        Self {
+            warp: true,
+            hide_on_key: true,
         }
     }
 }

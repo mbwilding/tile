@@ -10,10 +10,10 @@ use tile_config::Loaded;
 use tile_core::{Command, Effect, LayoutKind, ManageOptions, MonitorInfo, Rect, WindowId};
 use tile_ipc::{Event, Incoming, Query, Request, Response, Server};
 use tile_platform::{
-    Animation, Discovered, Hotkeys, Mover, PlaceError, Tray, TrayEvent, WinEvent, WinEventHooks,
-    Windows, cursor_pos,
+    Animation, Discovered, HotkeyEvent, Hotkeys, Mover, PlaceError, Tray, TrayEvent, WinEvent,
+    WinEventHooks, Windows, cursor_pos,
     desktops::{self as vd, DesktopChange, DesktopId},
-    foreground, is_shell_window, monitors,
+    foreground, is_shell_window, monitors, mouse_button_down, set_cursor_pos,
 };
 use tokio::{
     sync::mpsc::{self, UnboundedReceiver, UnboundedSender},
@@ -51,7 +51,7 @@ struct Published {
 struct Receivers {
     events: UnboundedReceiver<WinEvent>,
     desktops: UnboundedReceiver<DesktopChange>,
-    hotkeys: UnboundedReceiver<usize>,
+    hotkeys: UnboundedReceiver<HotkeyEvent>,
     tray: UnboundedReceiver<TrayEvent>,
     ipc: UnboundedReceiver<Incoming>,
     config: UnboundedReceiver<()>,
@@ -104,6 +104,10 @@ struct Daemon {
     heal_at: Option<Instant>,
     /// Re-entrancy guard for re-syncing focus after Windows refused a focus change.
     resyncing_focus: bool,
+    /// While typing hid the pointer: where it was then.
+    cursor_hidden: Option<(i32, i32)>,
+    /// While the pointer is hidden: when to next check whether the mouse moved.
+    cursor_check_at: Option<Instant>,
 }
 
 /// Apps repaint their frame on activation, after our focus event; wait that long to re-check.
@@ -114,6 +118,9 @@ const FORCE_GRACE: Duration = Duration::from_millis(500);
 
 /// How long the Win+L policy stays lifted for `lock` to take effect.
 const RELOCK_DELAY: Duration = Duration::from_secs(2);
+
+/// How often a hidden pointer checks for mouse movement.
+const CURSOR_POLL: Duration = Duration::from_millis(30);
 
 fn bump(map: &mut HashMap<WindowId, (u32, Instant)>, id: WindowId) {
     let entry = map.entry(id).or_insert((0, Instant::now()));
@@ -244,11 +251,14 @@ pub async fn run(config_path: PathBuf, loaded: Loaded) -> anyhow::Result<()> {
         relock_at: None,
         heal_at: None,
         resyncing_focus: false,
+        cursor_hidden: None,
+        cursor_check_at: None,
     };
     if daemon.loaded.config.general.tiling {
         daemon.start_tiling();
     }
     daemon.update_remap();
+    daemon.update_cursor();
     tracing::info!("Tile started");
 
     daemon
@@ -304,7 +314,15 @@ impl Daemon {
                     None => std::future::pending().await,
                 }
             };
+            let cursor_check_at = self.cursor_check_at;
+            let cursor_check = async {
+                match cursor_check_at {
+                    Some(at) => sleep_until(at).await,
+                    None => std::future::pending().await,
+                }
+            };
             tokio::select! {
+                () = cursor_check => self.check_cursor(),
                 () = relock => {
                     self.relock_at = None;
                     if self.lock_taken {
@@ -317,12 +335,15 @@ impl Daemon {
                 }
                 Some(event) = rx.events.recv() => self.on_event(event),
                 Some(change) = rx.desktops.recv() => self.on_desktop(change),
-                Some(index) = rx.hotkeys.recv() => {
-                    if let Some(command) = self.commands.get(index).cloned() {
-                        tracing::debug!("hotkey: {command}");
-                        self.run_command(command);
+                Some(event) = rx.hotkeys.recv() => match event {
+                    HotkeyEvent::Bind(index) => {
+                        if let Some(command) = self.commands.get(index).cloned() {
+                            tracing::debug!("hotkey: {command}");
+                            self.run_command(command);
+                        }
                     }
-                }
+                    HotkeyEvent::Typed => self.hide_cursor(),
+                },
                 Some(event) = rx.tray.recv() => self.on_tray(event),
                 Some(incoming) = rx.ipc.recv() => self.on_ipc(incoming),
                 Some(()) = rx.config.recv() => reload_at = Some(Instant::now() + RELOAD_DEBOUNCE),
@@ -363,6 +384,7 @@ impl Daemon {
 
     fn shutdown(&mut self) {
         self.stop_remap("remapping stopped");
+        self.show_cursor();
         self.release_windows();
         if self.lock_taken {
             tile_platform::set_lock_disabled(false);
@@ -501,6 +523,7 @@ impl Daemon {
             Ok(loaded) => {
                 self.loaded = loaded;
                 self.update_remap();
+                self.update_cursor();
                 match (self.tiling, self.loaded.config.general.tiling) {
                     (false, true) => self.start_tiling(),
                     (true, false) => self.stop_tiling(),
@@ -547,6 +570,7 @@ impl Daemon {
         if let Some(remap) = &self.remap {
             remap.send(remap::Command::Pause(paused));
         }
+        self.update_cursor();
         tracing::info!("Tile {}", if paused { "paused" } else { "resumed" });
         if !paused && self.tiling {
             self.refresh_monitors();
@@ -669,9 +693,67 @@ impl Daemon {
                 }
             }
             command => {
+                let before = self.focused_monitor().map(|m| m.id);
                 let effects = self.desktops.current().apply(&command);
                 self.apply(effects);
+                if let Some(monitor) = self.focused_monitor()
+                    && Some(monitor.id) != before
+                {
+                    let center = monitor.rect.center();
+                    if self.loaded.config.cursor.warp {
+                        set_cursor_pos(center);
+                    }
+                    self.show_cursor();
+                }
             }
+        }
+    }
+
+    fn focused_monitor(&self) -> Option<&MonitorInfo> {
+        self.desktops.current_ref().focused_monitor()
+    }
+
+    /// Starts or stops hiding the pointer while typing, to match `cursor.hide_on_key`.
+    fn update_cursor(&mut self) {
+        let hide = self.loaded.config.cursor.hide_on_key && !self.paused;
+        self.hotkeys.set_report_typing(hide);
+        if !hide {
+            self.show_cursor();
+        }
+    }
+
+    /// A key was typed: hide the pointer until the mouse moves.
+    fn hide_cursor(&mut self) {
+        if self.cursor_hidden.is_some() || self.paused || !self.loaded.config.cursor.hide_on_key {
+            return;
+        }
+        // Recorded first: if we die mid-way, the watchdog still restores the cursors.
+        self.cursor_hidden = Some(cursor_pos());
+        self.persist_restore();
+        if !tile_hook::hide_cursor() {
+            tracing::debug!("some system cursors couldn't be hidden");
+        }
+        self.cursor_check_at = Some(Instant::now() + CURSOR_POLL);
+    }
+
+    /// Brings a hidden pointer back.
+    fn show_cursor(&mut self) {
+        if self.cursor_hidden.take().is_none() {
+            return;
+        }
+        self.cursor_check_at = None;
+        if !tile_hook::restore_cursors() {
+            tracing::warn!("failed to restore the system cursors");
+        }
+        self.persist_restore();
+    }
+
+    /// Shows the hidden pointer once the mouse moved or a button is pressed.
+    fn check_cursor(&mut self) {
+        if self.cursor_hidden != Some(cursor_pos()) || mouse_button_down() {
+            self.show_cursor();
+        } else {
+            self.cursor_check_at = Some(Instant::now() + CURSOR_POLL);
         }
     }
 
@@ -1021,6 +1103,7 @@ impl Daemon {
                 if let Some(remap) = &self.remap {
                     remap.send(remap::Command::Reset);
                 }
+                self.show_cursor();
             }
         }
     }
@@ -1300,6 +1383,7 @@ impl Daemon {
                 .map(|(id, _)| id.0)
                 .collect(),
             lock_disabled: self.lock_taken,
+            cursor_hidden: self.cursor_hidden.is_some(),
         };
         restore.hidden.sort_unstable();
         restore.undecorated.sort_unstable();

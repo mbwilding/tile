@@ -14,7 +14,7 @@ use std::{
 
 pub use keys::{Keybind, Modifiers};
 pub use rules::{RuleOutcome, Rules};
-pub use schema::{Animations, Color, Config, General, Remap, Rule};
+pub use schema::{Animations, Color, Config, Cursor, General, Remap, Rule};
 pub use watch::watch;
 
 use tile_core::Command;

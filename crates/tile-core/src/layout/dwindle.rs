@@ -177,6 +177,17 @@ impl Dwindle {
             root.toggle_split(id, area.shrink(s.gaps_out), s.gaps_in);
         }
     }
+
+    /// Swaps `id` with the main window (the first one, top-left), or the main window with the
+    /// next one, like `swapwithmaster` in the master layout.
+    pub fn swap_with_main(&mut self, id: WindowId) {
+        let target = match self.windows().as_slice() {
+            [main, next, ..] if *main == id => *next,
+            [main, ..] => *main,
+            [] => return,
+        };
+        self.swap(id, target);
+    }
 }
 
 impl Layout for Dwindle {
@@ -307,6 +318,19 @@ mod tests {
         d.resize(WindowId(2), 192, 0, AREA, &s);
         let tiles = d.arrange(AREA, None, &s);
         assert_eq!(rect_of(&tiles, 2).w, 1152);
+    }
+
+    #[test]
+    fn swap_with_main_toggles_with_the_first_window() {
+        let s = settings();
+        let mut d = Dwindle::default();
+        for (id, f) in [(1, None), (2, Some(1)), (3, Some(2))] {
+            d.insert(WindowId(id), f.map(WindowId), AREA, &s);
+        }
+        d.swap_with_main(WindowId(3));
+        assert_eq!(d.windows(), [3, 2, 1].map(WindowId));
+        d.swap_with_main(WindowId(3));
+        assert_eq!(d.windows(), [2, 3, 1].map(WindowId));
     }
 
     #[test]
