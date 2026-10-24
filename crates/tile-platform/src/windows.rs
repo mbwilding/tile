@@ -69,7 +69,11 @@ fn process_name(pid: u32) -> String {
     w::HPROCESS::OpenProcess(co::PROCESS::QUERY_LIMITED_INFORMATION, false, pid)
         .and_then(|p| p.QueryFullProcessImageName(co::PROCESS_NAME::WIN32))
         .ok()
-        .and_then(|path| Path::new(&path).file_name().map(|n| n.to_string_lossy().into_owned()))
+        .and_then(|path| {
+            Path::new(&path)
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+        })
         .unwrap_or_default()
 }
 
@@ -118,10 +122,14 @@ fn examine(hwnd: &w::HWND, own_pid: u32) -> Option<Discovered> {
 
 /// Last resort: share the foreground thread's input state so the focus change is allowed.
 fn focus_attached(hwnd: &w::HWND) -> bool {
-    let Some(current) = w::HWND::GetForegroundWindow() else { return false };
+    let Some(current) = w::HWND::GetForegroundWindow() else {
+        return false;
+    };
     let (foreground_thread, _) = current.GetWindowThreadProcessId();
     let own_thread = w::GetCurrentThreadId();
-    if foreground_thread == own_thread || w::AttachThreadInput(own_thread, foreground_thread, true).is_err() {
+    if foreground_thread == own_thread
+        || w::AttachThreadInput(own_thread, foreground_thread, true).is_err()
+    {
         return false;
     }
     let focused = hwnd.SetForegroundWindow();
@@ -221,7 +229,9 @@ impl Windows {
 
     /// Whether the window is still visible to the user (not hidden or cloaked by its app).
     pub fn is_visible(&self, id: WindowId) -> bool {
-        self.handles.get(&id).is_some_and(|h| h.IsWindowVisible() && !is_cloaked(h))
+        self.handles
+            .get(&id)
+            .is_some_and(|h| h.IsWindowVisible() && !is_cloaked(h))
     }
 
     fn insets(&mut self, id: WindowId, hwnd: &w::HWND) -> Insets {
@@ -253,8 +263,16 @@ impl Windows {
     /// Whenever the size changes the old contents are discarded, so apps like Explorer don't
     /// keep stale fragments while resizing. `settled` marks the last placement of a move (not
     /// an animation frame): the frame is recomputed and the whole window repainted.
-    pub fn place(&mut self, id: WindowId, target: Rect, force: bool, settled: bool) -> Result<(), PlaceError> {
-        let Some(hwnd) = self.handles.get(&id) else { return Err(PlaceError::Gone) };
+    pub fn place(
+        &mut self,
+        id: WindowId,
+        target: Rect,
+        force: bool,
+        settled: bool,
+    ) -> Result<(), PlaceError> {
+        let Some(hwnd) = self.handles.get(&id) else {
+            return Err(PlaceError::Gone);
+        };
         if hwnd.IsZoomed() {
             let _ = hwnd.ShowWindowAsync(co::SW::RESTORE);
         }
@@ -265,11 +283,16 @@ impl Windows {
             target.w + insets.left + insets.right,
             target.h + insets.top + insets.bottom,
         );
-        let mut flags = co::SWP::NOZORDER | co::SWP::NOACTIVATE | co::SWP::NOOWNERZORDER | co::SWP::ASYNCWINDOWPOS;
+        let mut flags = co::SWP::NOZORDER
+            | co::SWP::NOACTIVATE
+            | co::SWP::NOOWNERZORDER
+            | co::SWP::ASYNCWINDOWPOS;
         if force {
             flags |= co::SWP::NOSENDCHANGING;
         }
-        let resizing = hwnd.GetWindowRect().is_ok_and(|r| (r.right - r.left, r.bottom - r.top) != (size.cx, size.cy));
+        let resizing = hwnd
+            .GetWindowRect()
+            .is_ok_and(|r| (r.right - r.left, r.bottom - r.top) != (size.cx, size.cy));
         if resizing || settled {
             flags |= co::SWP::NOCOPYBITS;
         }
@@ -278,15 +301,22 @@ impl Windows {
         }
         let (cx, cy) = target.center();
         let current = hwnd.MonitorFromWindow(co::MONITOR::DEFAULTTONEAREST);
-        let destination = w::HMONITOR::MonitorFromPoint(w::POINT::with(cx, cy), co::MONITOR::DEFAULTTONEAREST);
+        let destination =
+            w::HMONITOR::MonitorFromPoint(w::POINT::with(cx, cy), co::MONITOR::DEFAULTTONEAREST);
         let mut result = hwnd.SetWindowPos(w::HwndPlace::None, pos, size, flags);
         if result.is_ok() && current != destination {
             // Crossing monitors with different DPI makes apps rescale themselves; apply twice.
             result = hwnd.SetWindowPos(w::HwndPlace::None, pos, size, flags);
         }
         if result.is_ok() && settled {
-            let everything = w::RECT { left: 0, top: 0, right: i32::from(i16::MAX), bottom: i32::from(i16::MAX) };
-            let flags = co::RDW::INVALIDATE | co::RDW::ERASE | co::RDW::FRAME | co::RDW::ALLCHILDREN;
+            let everything = w::RECT {
+                left: 0,
+                top: 0,
+                right: i32::from(i16::MAX),
+                bottom: i32::from(i16::MAX),
+            };
+            let flags =
+                co::RDW::INVALIDATE | co::RDW::ERASE | co::RDW::FRAME | co::RDW::ALLCHILDREN;
             let _ = hwnd.RedrawWindow(everything, &w::HRGN::NULL, flags);
         }
         self.handles.insert(id, hwnd);
@@ -311,7 +341,9 @@ impl Windows {
 
     /// Brings a window to the foreground. Returns `false` if Windows refused.
     pub fn focus(&self, id: WindowId) -> bool {
-        let Some(hwnd) = self.handles.get(&id) else { return false };
+        let Some(hwnd) = self.handles.get(&id) else {
+            return false;
+        };
         if hwnd.IsIconic() {
             let _ = hwnd.ShowWindowAsync(co::SW::RESTORE);
         }
@@ -319,7 +351,10 @@ impl Windows {
         if !focused {
             // Windows only lets the process that received the last input steal focus.
             // A zero-distance mouse move makes that us, without any visible side effect.
-            let nudge = w::MOUSEINPUT { dwFlags: co::MOUSEEVENTF::MOVE, ..Default::default() };
+            let nudge = w::MOUSEINPUT {
+                dwFlags: co::MOUSEEVENTF::MOVE,
+                ..Default::default()
+            };
             let _ = w::SendInput(&[w::HwKbMouse::Mouse(nudge)]);
             focused = hwnd.SetForegroundWindow() || focus_attached(hwnd);
         }
@@ -341,7 +376,9 @@ impl Windows {
                 }
             }
         }
-        let Some(automation) = &self.automation else { return };
+        let Some(automation) = &self.automation else {
+            return;
+        };
         let result = automation
             .element_from_handle(Handle::from(id.0))
             .and_then(|el| el.get_pattern::<UIWindowPattern>())
@@ -359,7 +396,9 @@ impl Windows {
 
     /// Sets the DWM border color (Windows 11+). `None` restores the system default.
     pub fn set_border(&self, id: WindowId, color: Option<Color>) {
-        let Some(hwnd) = self.handles.get(&id) else { return };
+        let Some(hwnd) = self.handles.get(&id) else {
+            return;
+        };
         if let Err(e) = hwnd.DwmSetWindowAttribute(w::DwmAttr::BorderColor(colorref(color))) {
             tracing::trace!("border color not supported: {e}");
         }
@@ -384,7 +423,11 @@ fn set_caption(hwnd: &w::HWND, on: bool) -> bool {
     if on == has_caption {
         return false;
     }
-    hwnd.set_style(if on { style | caption } else { style & !caption });
+    hwnd.set_style(if on {
+        style | caption
+    } else {
+        style & !caption
+    });
     // Make Windows recompute the non-client area for the new style.
     let flags = co::SWP::NOMOVE
         | co::SWP::NOSIZE
@@ -393,7 +436,12 @@ fn set_caption(hwnd: &w::HWND, on: bool) -> bool {
         | co::SWP::NOOWNERZORDER
         | co::SWP::FRAMECHANGED
         | co::SWP::ASYNCWINDOWPOS;
-    let _ = hwnd.SetWindowPos(w::HwndPlace::None, w::POINT::default(), w::SIZE::default(), flags);
+    let _ = hwnd.SetWindowPos(
+        w::HwndPlace::None,
+        w::POINT::default(),
+        w::SIZE::default(),
+        flags,
+    );
     true
 }
 

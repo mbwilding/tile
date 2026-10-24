@@ -73,7 +73,10 @@ fn install_dir() -> PathBuf {
 
 /// `%LOCALAPPDATA%\Programs\Tile`, where earlier versions installed Tile.
 fn old_install_dir() -> PathBuf {
-    dirs::data_local_dir().unwrap_or_else(|| PathBuf::from(".")).join("Programs").join("Tile")
+    dirs::data_local_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("Programs")
+        .join("Tile")
 }
 
 /// The folder holding the build to install: this `tilectl.exe`'s own, or for the installed
@@ -81,7 +84,11 @@ fn old_install_dir() -> PathBuf {
 fn build_dir(dir: &Path) -> anyhow::Result<PathBuf> {
     let exe = std::env::current_exe()?;
     let own = exe.parent().context("no folder for tilectl.exe")?;
-    let source = if own == dir { std::env::current_dir()?.join("target").join("release") } else { own.to_owned() };
+    let source = if own == dir {
+        std::env::current_dir()?.join("target").join("release")
+    } else {
+        own.to_owned()
+    };
     for name in EXES {
         if !source.join(name).exists() {
             bail!(
@@ -101,10 +108,17 @@ pub async fn install() -> anyhow::Result<()> {
     stop_tile().await?;
     stop_launcher().await?;
     println!("Installing to {} (needs admin rights)...", dir.display());
-    let note = run_elevated(&Step::Install { source, user: current_user()? }).await?;
+    let note = run_elevated(&Step::Install {
+        source,
+        user: current_user()?,
+    })
+    .await?;
     let tile = dir.join("tile.exe");
-    set_run(LAUNCHER_RUN_VALUE, Some(&format!("\"{}\" --launcher", tile.display())))
-        .context("failed to register the launcher to start at sign-in")?;
+    set_run(
+        LAUNCHER_RUN_VALUE,
+        Some(&format!("\"{}\" --launcher", tile.display())),
+    )
+    .context("failed to register the launcher to start at sign-in")?;
     set_on_path(&dir, true)?;
     remove_old_install();
     start_detached(&tile, &["--launcher"]).context("failed to start the launcher")?;
@@ -131,12 +145,17 @@ pub async fn uninstall() -> anyhow::Result<()> {
 /// on success, or the error.
 async fn run_elevated(step: &Step) -> anyhow::Result<String> {
     let report = format!("tile-install-{}.sock", std::process::id());
-    let listener = ListenerOptions::new().name(report.as_str().to_ns_name::<GenericNamespaced>()?).create_tokio()?;
+    let listener = ListenerOptions::new()
+        .name(report.as_str().to_ns_name::<GenericNamespaced>()?)
+        .create_tokio()?;
     let exe = std::env::current_exe()?;
     let mut parameters = format!("elevated --report \"{report}\"");
     match step {
         Step::Install { source, user } => {
-            parameters += &format!(" install --source \"{}\" --user \"{user}\"", source.display());
+            parameters += &format!(
+                " install --source \"{}\" --user \"{user}\"",
+                source.display()
+            );
         }
         Step::Uninstall => parameters += " uninstall",
     }
@@ -184,7 +203,8 @@ fn run_step(step: &Step) -> anyhow::Result<String> {
     match step {
         Step::Install { source, user } => {
             copy_programs(source, &dir)?;
-            register_task(&dir.join("tile.exe"), user).context("failed to register the sign-in task")?;
+            register_task(&dir.join("tile.exe"), user)
+                .context("failed to register the sign-in task")?;
             // We run as administrator: started by us, Tile is too. Unless the prompt was
             // answered with another account, whose desktop it must not start on.
             if current_user()?.eq_ignore_ascii_case(user) {
@@ -214,11 +234,15 @@ fn copy_programs(source: &Path, dir: &Path) -> anyhow::Result<()> {
     for name in EXES {
         let target = dir.join(name);
         if target.exists() {
-            let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos();
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos();
             fs::rename(&target, target.with_extension(format!("{nanos}.old")))
                 .with_context(|| format!("failed to move {} aside", target.display()))?;
         }
-        fs::copy(source.join(name), &target).with_context(|| format!("failed to copy to {}", target.display()))?;
+        fs::copy(source.join(name), &target)
+            .with_context(|| format!("failed to copy to {}", target.display()))?;
     }
     Ok(())
 }
@@ -229,7 +253,10 @@ fn remove_programs(dir: &Path) -> anyhow::Result<()> {
     match fs::remove_dir_all(dir) {
         Err(e) if e.kind() != io::ErrorKind::NotFound && dir.exists() => {
             Command::new("cmd")
-                .raw_arg(format!("/C ping -n 3 127.0.0.1 >nul & rmdir /S /Q \"{}\"", dir.display()))
+                .raw_arg(format!(
+                    "/C ping -n 3 127.0.0.1 >nul & rmdir /S /Q \"{}\"",
+                    dir.display()
+                ))
                 .creation_flags(DETACHED_PROCESS | CREATE_NO_WINDOW)
                 .spawn()
                 .with_context(|| format!("failed to delete {}", dir.display()))?;
@@ -255,7 +282,8 @@ fn register_task(exe: &Path, user: &str) -> anyhow::Result<()> {
     let service = task_service()?;
     let folder = service.GetFolder("\\")?;
     let task = service.NewTask()?;
-    task.get_Principal()?.put_RunLevel(co::TASK_RUNLEVEL::HIGHEST)?;
+    task.get_Principal()?
+        .put_RunLevel(co::TASK_RUNLEVEL::HIGHEST)?;
     // The defaults would stop Tile after 3 days or on battery, and run it at low priority.
     let settings = task.get_Settings()?;
     settings.put_DisallowStartIfOnBatteries(false)?;
@@ -263,9 +291,15 @@ fn register_task(exe: &Path, user: &str) -> anyhow::Result<()> {
     settings.put_ExecutionTimeLimit("PT0S")?;
     settings.put_MultipleInstances(co::TASK_INSTANCES::IGNORE_NEW)?;
     settings.put_Priority(4)?;
-    let trigger = task.get_Triggers()?.Create(co::TASK_TRIGGER_TYPE2::LOGON)?.QueryInterface::<w::ILogonTrigger>()?;
+    let trigger = task
+        .get_Triggers()?
+        .Create(co::TASK_TRIGGER_TYPE2::LOGON)?
+        .QueryInterface::<w::ILogonTrigger>()?;
     trigger.put_UserId(user)?;
-    let action = task.get_Actions()?.Create(co::TASK_ACTION_TYPE::EXEC)?.QueryInterface::<w::IExecAction>()?;
+    let action = task
+        .get_Actions()?
+        .Create(co::TASK_ACTION_TYPE::EXEC)?
+        .QueryInterface::<w::IExecAction>()?;
     action.put_Path(&exe.to_string_lossy())?;
     folder.RegisterTaskDefinition(
         Some(TASK),
@@ -303,7 +337,10 @@ async fn stop_tile() -> anyhow::Result<()> {
     if !tile_ipc::is_running().await {
         return Ok(());
     }
-    Client::send(&Request::Dispatch { command: "exit".into() }).await?;
+    Client::send(&Request::Dispatch {
+        command: "exit".into(),
+    })
+    .await?;
     wait_until_stopped(tile_ipc::is_running, "Tile").await?;
     println!("Stopped the running Tile.");
     Ok(())
@@ -318,11 +355,16 @@ async fn stop_launcher() -> anyhow::Result<()> {
     wait_until_stopped(launcher::is_running, "launcher").await
 }
 
-async fn wait_until_stopped<F: Future<Output = bool>>(running: fn() -> F, what: &str) -> anyhow::Result<()> {
+async fn wait_until_stopped<F: Future<Output = bool>>(
+    running: fn() -> F,
+    what: &str,
+) -> anyhow::Result<()> {
     let deadline = Instant::now() + EXIT_TIMEOUT;
     while running().await {
         if Instant::now() > deadline {
-            bail!("the running {what} didn't exit; quit it from the tray or Task Manager and try again");
+            bail!(
+                "the running {what} didn't exit; quit it from the tray or Task Manager and try again"
+            );
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
@@ -350,7 +392,9 @@ fn start_detached(exe: &Path, args: &[&str]) -> io::Result<()> {
             .spawn()
     };
     let base = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP;
-    launch(base | CREATE_BREAKAWAY_FROM_JOB).or_else(|_| launch(base)).map(drop)
+    launch(base | CREATE_BREAKAWAY_FROM_JOB)
+        .or_else(|_| launch(base))
+        .map(drop)
 }
 
 fn io_error(e: co::ERROR) -> io::Error {
@@ -368,7 +412,13 @@ fn set_run(name: &str, command: Option<&str>) -> io::Result<()> {
         None => w::HKEY::CURRENT_USER
             .RegOpenKeyEx(Some(RUN_KEY), co::REG_OPTION::default(), co::KEY::SET_VALUE)
             .and_then(|key| key.RegDeleteValue(Some(name)))
-            .or_else(|e| if e == co::ERROR::FILE_NOT_FOUND { Ok(()) } else { Err(e) }),
+            .or_else(|e| {
+                if e == co::ERROR::FILE_NOT_FOUND {
+                    Ok(())
+                } else {
+                    Err(e)
+                }
+            }),
     }
     .map_err(io_error)
 }
@@ -377,15 +427,20 @@ fn set_run(name: &str, command: Option<&str>) -> io::Result<()> {
 /// and its registry type. Terminals see the change after the next sign-in.
 fn set_on_path(dir: &Path, present: bool) -> anyhow::Result<()> {
     let flags = co::RRF::RT_REG_SZ | co::RRF::RT_REG_EXPAND_SZ | co::RRF::NOEXPAND;
-    let (path, expand) = match w::HKEY::CURRENT_USER.RegGetValue(Some(ENV_KEY), Some(PATH_VALUE), flags) {
-        Ok(w::RegistryValue::Sz(s)) => (s, false),
-        Ok(w::RegistryValue::ExpandSz(s)) => (s, true),
-        _ => (String::new(), true),
-    };
+    let (path, expand) =
+        match w::HKEY::CURRENT_USER.RegGetValue(Some(ENV_KEY), Some(PATH_VALUE), flags) {
+            Ok(w::RegistryValue::Sz(s)) => (s, false),
+            Ok(w::RegistryValue::ExpandSz(s)) => (s, true),
+            _ => (String::new(), true),
+        };
     let Some(path) = edit_path(&path, &dir.to_string_lossy(), present) else {
         return Ok(());
     };
-    let value = if expand { w::RegistryValue::ExpandSz(path) } else { w::RegistryValue::Sz(path) };
+    let value = if expand {
+        w::RegistryValue::ExpandSz(path)
+    } else {
+        w::RegistryValue::Sz(path)
+    };
     w::HKEY::CURRENT_USER
         .RegSetKeyValue(Some(ENV_KEY), Some(PATH_VALUE), value)
         .map_err(io_error)
@@ -395,7 +450,11 @@ fn set_on_path(dir: &Path, present: bool) -> anyhow::Result<()> {
 /// `path` with `dir` added or removed, or `None` if it already is the way `present` asks.
 /// Entries match case-insensitively, ignoring a trailing backslash.
 fn edit_path(path: &str, dir: &str, present: bool) -> Option<String> {
-    let same = |entry: &str| entry.trim_end_matches('\\').eq_ignore_ascii_case(dir.trim_end_matches('\\'));
+    let same = |entry: &str| {
+        entry
+            .trim_end_matches('\\')
+            .eq_ignore_ascii_case(dir.trim_end_matches('\\'))
+    };
     let mut entries: Vec<&str> = path.split(';').filter(|e| !e.is_empty()).collect();
     if entries.iter().any(|e| same(e)) == present {
         return None;
@@ -417,7 +476,10 @@ mod tests {
     #[test]
     fn adds_once_keeping_other_entries() {
         let path = r"%USERPROFILE%\bin;C:\tools;";
-        assert_eq!(edit_path(path, DIR, true).unwrap(), format!(r"%USERPROFILE%\bin;C:\tools;{DIR}"));
+        assert_eq!(
+            edit_path(path, DIR, true).unwrap(),
+            format!(r"%USERPROFILE%\bin;C:\tools;{DIR}")
+        );
         assert_eq!(edit_path(&format!(r"C:\tools;{DIR}\"), DIR, true), None);
         assert_eq!(edit_path("", DIR, true).unwrap(), DIR);
     }
@@ -425,7 +487,10 @@ mod tests {
     #[test]
     fn removes_every_matching_entry() {
         let path = format!(r"C:\tools;{};%USERPROFILE%\bin;{DIR}\", DIR.to_lowercase());
-        assert_eq!(edit_path(&path, DIR, false).unwrap(), r"C:\tools;%USERPROFILE%\bin");
+        assert_eq!(
+            edit_path(&path, DIR, false).unwrap(),
+            r"C:\tools;%USERPROFILE%\bin"
+        );
         assert_eq!(edit_path(r"C:\tools", DIR, false), None);
     }
 }

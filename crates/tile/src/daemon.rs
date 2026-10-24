@@ -7,12 +7,11 @@ use std::{
 
 use anyhow::{Context, bail};
 use tile_config::Loaded;
-use tile_core::{
-    Command, Effect, LayoutKind, ManageOptions, MonitorInfo, Rect, WindowId,
-};
+use tile_core::{Command, Effect, LayoutKind, ManageOptions, MonitorInfo, Rect, WindowId};
 use tile_ipc::{Event, Incoming, Query, Request, Response, Server};
 use tile_platform::{
-    Animation, Discovered, Hotkeys, Mover, PlaceError, Tray, TrayEvent, WinEvent, WinEventHooks, Windows, cursor_pos,
+    Animation, Discovered, Hotkeys, Mover, PlaceError, Tray, TrayEvent, WinEvent, WinEventHooks,
+    Windows, cursor_pos,
     desktops::{self as vd, DesktopChange, DesktopId},
     foreground, is_shell_window, monitors,
 };
@@ -161,7 +160,6 @@ fn spawn_watchdog() {
     }
 }
 
-
 /// Whether a window currently lives on a native desktop other than the visible one.
 fn on_other_desktop(raw: isize) -> bool {
     matches!((vd::desktop_of(raw), vd::current_desktop()), (Some(d), Some(c)) if d != c)
@@ -171,7 +169,8 @@ pub async fn run(config_path: PathBuf, loaded: Loaded) -> anyhow::Result<()> {
     if tile_ipc::is_running().await {
         bail!("Tile is already running");
     }
-    let server = Server::bind(tile_platform::user_sid().as_deref()).context("failed to create the IPC pipe")?;
+    let server = Server::bind(tile_platform::user_sid().as_deref())
+        .context("failed to create the IPC pipe")?;
     let _com = vd::init_com();
 
     // Recover windows a crashed instance left hidden or undecorated.
@@ -185,7 +184,9 @@ pub async fn run(config_path: PathBuf, loaded: Loaded) -> anyhow::Result<()> {
     let (config_tx, config_rx) = mpsc::unbounded_channel();
     let (desktop_tx, desktop_rx) = mpsc::unbounded_channel();
 
-    let (hooks, events) = WinEventHooks::install().await.context("failed to hook window events")?;
+    let (hooks, events) = WinEventHooks::install()
+        .await
+        .context("failed to hook window events")?;
     let _desktop_listener = vd::listen(desktop_tx);
     let hotkeys = Hotkeys::start(hotkey_tx);
     let tray = Tray::spawn(tray_tx);
@@ -364,10 +365,20 @@ impl Daemon {
         // Without the takeover, Windows would lock *and* run the bind.
         let win_l = self.win_l_available();
         if !win_l && self.loaded.binds.iter().any(|(bind, _)| bind.is_win_l()) {
-            tracing::info!("Win+L binds are skipped: Windows keeps Win+L (see `general.override_win_l`)");
+            tracing::info!(
+                "Win+L binds are skipped: Windows keeps Win+L (see `general.override_win_l`)"
+            );
         }
-        let usable: Vec<_> = self.loaded.binds.iter().filter(|(bind, _)| win_l || !bind.is_win_l()).collect();
-        let binds: Vec<_> = usable.iter().map(|(bind, command)| (bind.clone(), *command == Command::TogglePause)).collect();
+        let usable: Vec<_> = self
+            .loaded
+            .binds
+            .iter()
+            .filter(|(bind, _)| win_l || !bind.is_win_l())
+            .collect();
+        let binds: Vec<_> = usable
+            .iter()
+            .map(|(bind, command)| (bind.clone(), *command == Command::TogglePause))
+            .collect();
         self.commands = usable.iter().map(|(_, c)| c.clone()).collect();
         for error in self.hotkeys.set_binds(&binds) {
             tracing::error!("{error}");
@@ -388,11 +399,17 @@ impl Daemon {
                     .into_iter()
                     .filter_map(|id| {
                         let info = self.windows.info(id)?;
-                        self.loaded.rules.resolve(&info).decorations.map(|d| (id, d))
+                        self.loaded
+                            .rules
+                            .resolve(&info)
+                            .decorations
+                            .map(|d| (id, d))
                     })
                     .collect();
                 let config = &self.loaded.config;
-                let effects = self.desktops.set_settings(config.layout_settings(), config.general.layout);
+                let effects = self
+                    .desktops
+                    .set_settings(config.layout_settings(), config.general.layout);
                 self.repaint_borders();
                 self.apply(effects);
                 tracing::info!("config reloaded");
@@ -453,7 +470,9 @@ impl Daemon {
             return;
         }
         self.lock_grant_requested = true;
-        tracing::warn!("Win+L needs a one-time permission; asking Windows (UAC). Win+L binds wait until then");
+        tracing::warn!(
+            "Win+L needs a one-time permission; asking Windows (UAC). Win+L binds wait until then"
+        );
         let script = paths::data_dir().join("grant-win-l.ps1");
         let written = std::fs::create_dir_all(paths::data_dir())
             .and_then(|()| std::fs::write(&script, tile_platform::GRANT_SCRIPT));
@@ -475,7 +494,11 @@ impl Daemon {
     /// Retries taking over Win+L after the permission prompt.
     fn retry_lock_override(&mut self) {
         let want = self.loaded.config.general.override_win_l;
-        if want && self.lock_grant_requested && !self.lock_taken && tile_platform::set_lock_disabled(true) {
+        if want
+            && self.lock_grant_requested
+            && !self.lock_taken
+            && tile_platform::set_lock_disabled(true)
+        {
             self.lock_taken = true;
             tracing::info!("took over Win+L");
             self.persist_restore();
@@ -551,7 +574,8 @@ impl Daemon {
             self.decoration_rules.insert(found.id, decorations);
         }
         if self.loaded.config.general.borders {
-            self.windows.set_border(found.id, Some(self.loaded.config.general.border_inactive));
+            self.windows
+                .set_border(found.id, Some(self.loaded.config.general.border_inactive));
         }
         let desktop = vd::desktop_of(found.id.0).unwrap_or_else(|| self.desktops.current_id());
         let options = ManageOptions {
@@ -611,7 +635,9 @@ impl Daemon {
             }
             return;
         }
-        let Some(desktop) = vd::desktop_of(id.0) else { return };
+        let Some(desktop) = vd::desktop_of(id.0) else {
+            return;
+        };
         match self.desktops.owner(id) {
             None => self.try_manage(id.0),
             Some(owner) if owner != desktop => self.migrate(id, desktop),
@@ -632,7 +658,11 @@ impl Daemon {
         self.tweens.remove(&id);
         let info = self.windows.info(id).unwrap_or_default();
         let rect = self.windows.frame(id).unwrap_or_default();
-        let options = ManageOptions { floating, rect, ..ManageOptions::default() };
+        let options = ManageOptions {
+            floating,
+            rect,
+            ..ManageOptions::default()
+        };
         let effects = self.desktops.open(desktop, id, info, options);
         self.apply(effects);
     }
@@ -756,7 +786,9 @@ impl Daemon {
                     self.placed.remove(&id);
                     if let Some(rect) = self.windows.frame(id) {
                         let cursor = cursor_pos();
-                        let effects = self.desktops.with_owner(id, |s| s.window_moved(id, rect, cursor));
+                        let effects = self
+                            .desktops
+                            .with_owner(id, |s| s.window_moved(id, rect, cursor));
                         self.apply(effects);
                     }
                 }
@@ -789,8 +821,12 @@ impl Daemon {
         {
             return;
         }
-        let Some(target) = self.placed.get(&id).copied() else { return };
-        let Some(frame) = self.windows.frame(id) else { return };
+        let Some(target) = self.placed.get(&id).copied() else {
+            return;
+        };
+        let Some(frame) = self.windows.frame(id) else {
+            return;
+        };
         // Placement is asynchronous: only a window already at its tile's position but larger
         // than the tile has refused the size; anything else may simply not have moved yet.
         let at_target = (frame.x - target.x).abs() <= 2 && (frame.y - target.y).abs() <= 2;
@@ -800,7 +836,11 @@ impl Daemon {
         }
         match self.forced.get(&id) {
             None => {
-                tracing::debug!("{id:?} wants at least {}x{}; forcing its tile size", frame.w, frame.h);
+                tracing::debug!(
+                    "{id:?} wants at least {}x{}; forcing its tile size",
+                    frame.w,
+                    frame.h
+                );
                 self.forced.insert(id, Instant::now());
                 if self.place_now(id, target, true).is_err() {
                     self.unmanage(id);
@@ -825,8 +865,15 @@ impl Daemon {
         }
         let x = target.x.min(area.right() - frame.w).max(area.x);
         let y = target.y.min(area.bottom() - frame.h).max(area.y);
-        tracing::debug!("{id:?} resized itself to {}x{} even when forced; keeping it on screen", frame.w, frame.h);
-        if self.place_now(id, Rect::new(x, y, frame.w, frame.h), true).is_err() {
+        tracing::debug!(
+            "{id:?} resized itself to {}x{} even when forced; keeping it on screen",
+            frame.w,
+            frame.h
+        );
+        if self
+            .place_now(id, Rect::new(x, y, frame.w, frame.h), true)
+            .is_err()
+        {
             self.unmanage(id);
         }
     }
@@ -854,15 +901,25 @@ impl Daemon {
                     self.run_command(command);
                     Response::Ok
                 }
-                Err(e) => Response::Error { message: e.to_string() },
+                Err(e) => Response::Error {
+                    message: e.to_string(),
+                },
             },
             Request::Query { what } => {
                 let state = self.desktops.current_ref();
                 match what {
-                    Query::Monitors => Response::Monitors { monitors: state.snapshot_monitors() },
-                    Query::Workspaces => Response::Workspaces { workspaces: state.snapshot_workspaces() },
-                    Query::Windows => Response::Windows { windows: state.snapshot_windows() },
-                    Query::ActiveWindow => Response::ActiveWindow { window: state.snapshot_active_window() },
+                    Query::Monitors => Response::Monitors {
+                        monitors: state.snapshot_monitors(),
+                    },
+                    Query::Workspaces => Response::Workspaces {
+                        workspaces: state.snapshot_workspaces(),
+                    },
+                    Query::Windows => Response::Windows {
+                        windows: state.snapshot_windows(),
+                    },
+                    Query::ActiveWindow => Response::ActiveWindow {
+                        window: state.snapshot_active_window(),
+                    },
                 }
             }
             Request::Subscribe => {
@@ -880,7 +937,13 @@ impl Daemon {
     fn apply(&mut self, effects: Vec<Effect>) {
         let shown: HashSet<WindowId> = effects
             .iter()
-            .filter_map(|e| if let Effect::Show(id) = e { Some(*id) } else { None })
+            .filter_map(|e| {
+                if let Effect::Show(id) = e {
+                    Some(*id)
+                } else {
+                    None
+                }
+            })
             .collect();
         let mut failed = Vec::new();
         let mut focus_refused = false;
@@ -929,10 +992,9 @@ impl Daemon {
     }
 
     fn wants_decorations(&self, id: WindowId) -> bool {
-        self.decoration_rules
-            .get(&id)
-            .copied()
-            .unwrap_or_else(|| self.loaded.config.general.decorations || self.desktops.is_floating(id))
+        self.decoration_rules.get(&id).copied().unwrap_or_else(|| {
+            self.loaded.config.general.decorations || self.desktops.is_floating(id)
+        })
     }
 
     /// Adds or removes title bars so every managed window matches the config.
@@ -972,8 +1034,12 @@ impl Daemon {
         {
             let now = std::time::Instant::now();
             // Retargeting continues from wherever the running animation is right now.
-            let existing = self.tweens.remove(&id).map(|t| (t.animation.at(now).0, t.mover));
-            if let Some((from, mover)) = existing.or_else(|| Mover::spawn(id.0).map(|m| (previous, m)))
+            let existing = self
+                .tweens
+                .remove(&id)
+                .map(|t| (t.animation.at(now).0, t.mover));
+            if let Some((from, mover)) =
+                existing.or_else(|| Mover::spawn(id.0).map(|m| (previous, m)))
                 && let Some(insets) = self.windows.insets_of(id)
             {
                 let config = &self.loaded.config.animations;
@@ -997,7 +1063,10 @@ impl Daemon {
 
     /// `settled`: the final placement of a move (not an animation frame), which repaints.
     fn place_now(&mut self, id: WindowId, rect: Rect, settled: bool) -> Result<(), WindowId> {
-        match self.windows.place(id, rect, self.forced.contains_key(&id), settled) {
+        match self
+            .windows
+            .place(id, rect, self.forced.contains_key(&id), settled)
+        {
             Ok(()) => Ok(()),
             Err(PlaceError::Gone) => Err(id),
             Err(PlaceError::AccessDenied) => {
@@ -1063,7 +1132,11 @@ impl Daemon {
             if self.desktops.owner(id) != Some(current) || self.desktops.is_hidden(id) {
                 continue;
             }
-            let want = Some(if Some(id) == focused { general.border_active } else { general.border_inactive });
+            let want = Some(if Some(id) == focused {
+                general.border_active
+            } else {
+                general.border_inactive
+            });
             // DWM doesn't report border colors on current Windows builds (E_INVALIDARG), so
             // when it can't say, just re-assert ours: a no-op when unchanged.
             if self.windows.border_is(id, want) != Some(true) {
@@ -1085,7 +1158,12 @@ impl Daemon {
     fn persist_restore(&mut self) {
         let mut restore = Restore {
             hidden: self.desktops.hidden().into_iter().map(|id| id.0).collect(),
-            undecorated: self.undecorated.iter().filter(|(_, changed)| **changed).map(|(id, _)| id.0).collect(),
+            undecorated: self
+                .undecorated
+                .iter()
+                .filter(|(_, changed)| **changed)
+                .map(|(id, _)| id.0)
+                .collect(),
             lock_disabled: self.lock_taken,
         };
         restore.hidden.sort_unstable();
@@ -1100,7 +1178,9 @@ impl Daemon {
         let state = self.desktops.current_ref();
         Published {
             workspace: state.focused_workspace(),
-            window: state.snapshot_active_window().map(|w| (w.id, w.title, w.exe)),
+            window: state
+                .snapshot_active_window()
+                .map(|w| (w.id, w.title, w.exe)),
             layout: state.active_layout(),
         }
     }
@@ -1110,8 +1190,16 @@ impl Daemon {
         let mut events = Vec::new();
         events.extend(now.workspace.map(|id| Event::Workspace { id }));
         events.push(match now.window {
-            Some((id, title, exe)) => Event::ActiveWindow { id: Some(id), title: Some(title), exe: Some(exe) },
-            None => Event::ActiveWindow { id: None, title: None, exe: None },
+            Some((id, title, exe)) => Event::ActiveWindow {
+                id: Some(id),
+                title: Some(title),
+                exe: Some(exe),
+            },
+            None => Event::ActiveWindow {
+                id: None,
+                title: None,
+                exe: None,
+            },
         });
         events.extend(now.layout.map(|layout| Event::Layout { layout }));
         events
@@ -1136,7 +1224,11 @@ impl Daemon {
                     title: Some(title.clone()),
                     exe: Some(exe.clone()),
                 },
-                None => Event::ActiveWindow { id: None, title: None, exe: None },
+                None => Event::ActiveWindow {
+                    id: None,
+                    title: None,
+                    exe: None,
+                },
             });
         }
         if now.layout != self.published.layout
@@ -1146,7 +1238,12 @@ impl Daemon {
         }
         self.published = now;
         self.subscribers.retain(|tx| {
-            events.iter().all(|event| tx.send(Response::Event { event: event.clone() }).is_ok())
+            events.iter().all(|event| {
+                tx.send(Response::Event {
+                    event: event.clone(),
+                })
+                .is_ok()
+            })
         });
     }
 }

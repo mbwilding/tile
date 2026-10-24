@@ -49,7 +49,11 @@ impl Loaded {
 
     /// Loads `path`, or the built-in defaults when the file doesn't exist.
     pub fn load_or_default(path: &Path) -> Result<Self, ConfigError> {
-        if path.exists() { Self::load(path) } else { Ok(Self::defaults()) }
+        if path.exists() {
+            Self::load(path)
+        } else {
+            Ok(Self::defaults())
+        }
     }
 
     fn from_config(config: Config) -> Result<Self, ConfigError> {
@@ -57,7 +61,9 @@ impl Loaded {
             .binds
             .iter()
             .map(|(keys, action)| {
-                let bind = keys.parse::<Keybind>().map_err(|e| ConfigError::Bind(keys.clone(), e))?;
+                let bind = keys
+                    .parse::<Keybind>()
+                    .map_err(|e| ConfigError::Bind(keys.clone(), e))?;
                 let command = action
                     .parse::<Command>()
                     .map_err(|e| ConfigError::Bind(keys.clone(), e.to_string()))?;
@@ -65,7 +71,11 @@ impl Loaded {
             })
             .collect::<Result<_, ConfigError>>()?;
         let rules = Rules::compile(&config.rules)?;
-        Ok(Self { config, binds, rules })
+        Ok(Self {
+            config,
+            binds,
+            rules,
+        })
     }
 
     pub fn load(path: &Path) -> Result<Self, ConfigError> {
@@ -76,7 +86,10 @@ impl Loaded {
 
 /// `%APPDATA%\Tile\config.toml`. Created on first run with every default commented out.
 pub fn default_path() -> PathBuf {
-    dirs::config_dir().unwrap_or_else(|| PathBuf::from(".")).join("Tile").join("config.toml")
+    dirs::config_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("Tile")
+        .join("config.toml")
 }
 
 const TEMPLATE_HEADER: &str = "\
@@ -106,7 +119,11 @@ pub fn ensure_exists(path: &Path) -> io::Result<()> {
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir)?;
     }
-    match fs::OpenOptions::new().write(true).create_new(true).open(path) {
+    match fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+    {
         // Don't leave a partial file behind: it would stop the template being written again.
         Ok(mut file) => io::Write::write_all(&mut file, template().as_bytes()).inspect_err(|_| {
             drop(file);
@@ -148,7 +165,10 @@ mod tests {
             .lines()
             .map(|l| format!("{}\n", l.strip_prefix("# ").unwrap_or(l)))
             .collect();
-        assert_eq!(Loaded::parse(&uncommented).unwrap().config, Config::default());
+        assert_eq!(
+            Loaded::parse(&uncommented).unwrap().config,
+            Config::default()
+        );
     }
 
     #[test]

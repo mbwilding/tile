@@ -66,7 +66,10 @@ impl FromStr for Keybind {
                 other => return Err(format!("unknown modifier `{other}`")),
             }
         }
-        Ok(Self { modifiers, key: key_name(key) })
+        Ok(Self {
+            modifiers,
+            key: key_name(key),
+        })
     }
 }
 
@@ -82,7 +85,12 @@ impl Keybind {
 impl fmt::Display for Keybind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let m = self.modifiers;
-        for (on, name) in [(m.super_key, "super"), (m.ctrl, "ctrl"), (m.alt, "alt"), (m.shift, "shift")] {
+        for (on, name) in [
+            (m.super_key, "super"),
+            (m.ctrl, "ctrl"),
+            (m.alt, "alt"),
+            (m.shift, "shift"),
+        ] {
             if on {
                 write!(f, "{name}+")?;
             }

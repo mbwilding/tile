@@ -10,7 +10,8 @@ use winsafe::{self as w, co};
 
 const KEY: &str = r"Software\Microsoft\Windows\Shell\ClickToDo";
 const VALUE: &str = "DisableClickToDo";
-const EXE: &str = r"C:\Windows\SystemApps\MicrosoftWindows.Client.CoreAI_cw5n1h2txyewy\ClickToDo.exe";
+const EXE: &str =
+    r"C:\Windows\SystemApps\MicrosoftWindows.Client.CoreAI_cw5n1h2txyewy\ClickToDo.exe";
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 /// Whether this PC has Click to Do at all.
@@ -28,7 +29,8 @@ pub fn click_to_do_disabled() -> bool {
 
 /// Switches Click to Do off and stops it. Returns whether the switch could be changed.
 pub fn disable_click_to_do() -> bool {
-    let result = w::HKEY::CURRENT_USER.RegSetKeyValue(Some(KEY), Some(VALUE), w::RegistryValue::Dword(1));
+    let result =
+        w::HKEY::CURRENT_USER.RegSetKeyValue(Some(KEY), Some(VALUE), w::RegistryValue::Dword(1));
     if let Err(e) = result {
         tracing::warn!("failed to disable Click to Do: {e}");
         return false;

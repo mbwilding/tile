@@ -61,7 +61,12 @@ impl Bezier {
 /// Interpolates between two rectangles; `t` may overshoot 1.0 for springy curves.
 pub fn lerp_rect(from: Rect, to: Rect, t: f32) -> Rect {
     let mix = |a: i32, b: i32| a + crate::geometry::scale(b - a, t);
-    Rect::new(mix(from.x, to.x), mix(from.y, to.y), mix(from.w, to.w), mix(from.h, to.h))
+    Rect::new(
+        mix(from.x, to.x),
+        mix(from.y, to.y),
+        mix(from.w, to.w),
+        mix(from.h, to.h),
+    )
 }
 
 #[cfg(test)]
@@ -88,7 +93,11 @@ mod tests {
 
     #[test]
     fn lerp_midpoint() {
-        let r = lerp_rect(Rect::new(0, 0, 100, 100), Rect::new(100, 100, 200, 200), 0.5);
+        let r = lerp_rect(
+            Rect::new(0, 0, 100, 100),
+            Rect::new(100, 100, 200, 200),
+            0.5,
+        );
         assert_eq!(r, Rect::new(50, 50, 150, 150));
     }
 }

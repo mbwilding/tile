@@ -28,7 +28,14 @@ impl Desktops {
     pub fn new(current: DesktopId, settings: LayoutSettings, layout: LayoutKind) -> Self {
         let mut states = HashMap::new();
         states.insert(current, State::new(settings.clone(), layout));
-        Self { states, current, owner: HashMap::new(), settings, layout, monitors: Vec::new() }
+        Self {
+            states,
+            current,
+            owner: HashMap::new(),
+            settings,
+            layout,
+            monitors: Vec::new(),
+        }
     }
 
     pub const fn current_id(&self) -> DesktopId {
@@ -83,16 +90,36 @@ impl Desktops {
     }
 
     /// Runs `f` against the state that manages `id`.
-    pub fn with_owner(&mut self, id: WindowId, f: impl FnOnce(&mut State) -> Vec<Effect>) -> Vec<Effect> {
-        let Some(desktop) = self.owner(id) else { return Vec::new() };
+    pub fn with_owner(
+        &mut self,
+        id: WindowId,
+        f: impl FnOnce(&mut State) -> Vec<Effect>,
+    ) -> Vec<Effect> {
+        let Some(desktop) = self.owner(id) else {
+            return Vec::new();
+        };
         let effects = f(self.state_mut(desktop));
-        if desktop == self.current { effects } else { background(effects) }
+        if desktop == self.current {
+            effects
+        } else {
+            background(effects)
+        }
     }
 
-    pub fn open(&mut self, desktop: DesktopId, id: WindowId, info: WindowInfo, opts: ManageOptions) -> Vec<Effect> {
+    pub fn open(
+        &mut self,
+        desktop: DesktopId,
+        id: WindowId,
+        info: WindowInfo,
+        opts: ManageOptions,
+    ) -> Vec<Effect> {
         self.owner.insert(id, desktop);
         let effects = self.state_mut(desktop).window_opened(id, info, opts);
-        if desktop == self.current { effects } else { background(effects) }
+        if desktop == self.current {
+            effects
+        } else {
+            background(effects)
+        }
     }
 
     pub fn close(&mut self, id: WindowId) -> Vec<Effect> {
@@ -112,7 +139,11 @@ impl Desktops {
             .iter_mut()
             .flat_map(|(desktop, state)| {
                 let effects = f(state);
-                if *desktop == current { effects } else { background(effects) }
+                if *desktop == current {
+                    effects
+                } else {
+                    background(effects)
+                }
             })
             .collect()
     }

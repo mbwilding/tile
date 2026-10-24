@@ -86,18 +86,34 @@ fn print_human(response: &Response) {
                     (true, false) => " (visible)",
                     _ => "",
                 };
-                println!("workspace {}: monitor {monitor}, {} windows, {}{flags}", w.id, w.windows, w.layout);
+                println!(
+                    "workspace {}: monitor {monitor}, {} windows, {}{flags}",
+                    w.id, w.windows, w.layout
+                );
             }
         }
         Response::Windows { windows } => {
             for w in windows {
                 let mut flags = Vec::new();
-                for (on, name) in [(w.focused, "focused"), (w.floating, "floating"), (w.fullscreen, "fullscreen"), (w.hidden, "hidden")] {
+                for (on, name) in [
+                    (w.focused, "focused"),
+                    (w.floating, "floating"),
+                    (w.fullscreen, "fullscreen"),
+                    (w.hidden, "hidden"),
+                ] {
                     if on {
                         flags.push(name);
                     }
                 }
-                println!("{:#x} [ws {}] {} — {} ({}) {}", w.id, w.workspace, w.exe, w.title, w.class, flags.join(","));
+                println!(
+                    "{:#x} [ws {}] {} — {} ({}) {}",
+                    w.id,
+                    w.workspace,
+                    w.exe,
+                    w.title,
+                    w.class,
+                    flags.join(",")
+                );
             }
         }
         Response::ActiveWindow { window } => match window {
@@ -116,10 +132,20 @@ fn print_event(event: &Event) {
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     let (request, json) = match args.command {
-        Cmd::Dispatch { command } => (Request::Dispatch { command: command.join(" ") }, false),
+        Cmd::Dispatch { command } => (
+            Request::Dispatch {
+                command: command.join(" "),
+            },
+            false,
+        ),
         Cmd::Query { what, json } => (Request::Query { what: what.into() }, json),
         Cmd::Subscribe => (Request::Subscribe, true),
-        Cmd::Reload => (Request::Dispatch { command: "reload".into() }, false),
+        Cmd::Reload => (
+            Request::Dispatch {
+                command: "reload".into(),
+            },
+            false,
+        ),
         Cmd::Install => return install::install().await,
         Cmd::Uninstall => return install::uninstall().await,
         Cmd::Elevated { report, step } => return install::elevated(step, &report).await,

@@ -207,7 +207,13 @@ impl LayoutState {
         }
     }
 
-    pub fn insert(&mut self, id: WindowId, focused: Option<WindowId>, area: Rect, s: &LayoutSettings) {
+    pub fn insert(
+        &mut self,
+        id: WindowId,
+        focused: Option<WindowId>,
+        area: Rect,
+        s: &LayoutSettings,
+    ) {
         self.inner_mut().insert(id, focused, area, s);
     }
 
@@ -223,7 +229,12 @@ impl LayoutState {
         self.inner().contains(id)
     }
 
-    pub fn arrange(&mut self, area: Rect, focused: Option<WindowId>, s: &LayoutSettings) -> Vec<Tile> {
+    pub fn arrange(
+        &mut self,
+        area: Rect,
+        focused: Option<WindowId>,
+        s: &LayoutSettings,
+    ) -> Vec<Tile> {
         self.inner_mut().arrange(area, focused, s)
     }
 

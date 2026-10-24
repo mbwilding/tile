@@ -61,24 +61,28 @@ impl Hotkeys {
     fn run(&self, tx: &mpsc::UnboundedSender<usize>) {
         let hook = hook::start();
         while let Ok(event) = hook.recv() {
-            let KeyboardEvent::KeyDown { vk_code, keyboard_state } = event else {
+            let KeyboardEvent::KeyDown {
+                vk_code,
+                keyboard_state,
+            } = event
+            else {
                 continue;
             };
             let mods = held(&keyboard_state);
             let paused = self.paused.load(Ordering::Relaxed);
-            let matched = self
-                .table
-                .read()
-                .ok()
-                .and_then(|t| {
-                    t.iter()
-                        .find(|b| b.vk == vk_code && b.modifiers == mods && (b.always || !paused))
-                        .map(|b| b.index)
-                });
+            let matched = self.table.read().ok().and_then(|t| {
+                t.iter()
+                    .find(|b| b.vk == vk_code && b.modifiers == mods && (b.always || !paused))
+                    .map(|b| b.index)
+            });
             match matched {
                 Some(index) => {
                     // `Replace` also injects a dummy key so releasing Win won't open Start.
-                    hook.key_action(if mods.super_key { KeyAction::Replace } else { KeyAction::Block });
+                    hook.key_action(if mods.super_key {
+                        KeyAction::Replace
+                    } else {
+                        KeyAction::Block
+                    });
                     if tx.send(index).is_err() {
                         break;
                     }
@@ -96,13 +100,20 @@ impl Hotkeys {
         let table = binds
             .iter()
             .enumerate()
-            .filter_map(|(index, (bind, always))| match VKey::from_keyname(&bind.key) {
-                Ok(key) => Some(Binding { vk: key.to_vk_code(), modifiers: bind.modifiers, index, always: *always }),
-                Err(e) => {
-                    errors.push(format!("bind `{bind}`: {e}"));
-                    None
-                }
-            })
+            .filter_map(
+                |(index, (bind, always))| match VKey::from_keyname(&bind.key) {
+                    Ok(key) => Some(Binding {
+                        vk: key.to_vk_code(),
+                        modifiers: bind.modifiers,
+                        index,
+                        always: *always,
+                    }),
+                    Err(e) => {
+                        errors.push(format!("bind `{bind}`: {e}"));
+                        None
+                    }
+                },
+            )
             .collect();
         if let Ok(mut t) = self.table.write() {
             *t = table;

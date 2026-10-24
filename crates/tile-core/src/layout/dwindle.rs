@@ -74,7 +74,11 @@ impl Node {
         match self {
             Self::Leaf(leaf) if leaf == id => None,
             Self::Leaf(_) => Some(self),
-            Self::Split { axis, ratio, children } => {
+            Self::Split {
+                axis,
+                ratio,
+                children,
+            } => {
                 let [a, b] = *children;
                 match (a.without(id), b.without(id)) {
                     (Some(a), Some(b)) => Some(Self::Split {
@@ -91,8 +95,16 @@ impl Node {
 
     fn arrange(&self, rect: Rect, gap: i32, out: &mut Vec<Tile>) {
         match self {
-            Self::Leaf(id) => out.push(Tile { id: *id, rect, visible: true }),
-            Self::Split { axis, ratio, children } => {
+            Self::Leaf(id) => out.push(Tile {
+                id: *id,
+                rect,
+                visible: true,
+            }),
+            Self::Split {
+                axis,
+                ratio,
+                children,
+            } => {
                 let axis = axis.unwrap_or_else(|| Axis::for_rect(&rect));
                 let (a, b) = rect.split(axis, *ratio, gap);
                 children[0].arrange(a, gap, out);
@@ -106,7 +118,12 @@ impl Node {
     }
 
     fn toggle_split(&mut self, id: WindowId, rect: Rect, gap: i32) -> bool {
-        let Self::Split { axis, ratio, children } = self else {
+        let Self::Split {
+            axis,
+            ratio,
+            children,
+        } = self
+        else {
             return false;
         };
         let effective = axis.unwrap_or_else(|| Axis::for_rect(&rect));
@@ -124,7 +141,11 @@ impl Node {
         match self {
             Self::Leaf(leaf) if *leaf == id => Search::Found,
             Self::Leaf(_) => Search::Missing,
-            Self::Split { axis, ratio, children } => {
+            Self::Split {
+                axis,
+                ratio,
+                children,
+            } => {
                 let effective = axis.unwrap_or_else(|| Axis::for_rect(&rect));
                 let (ra, rb) = rect.split(effective, *ratio, gap);
                 let [a, b] = children.as_mut();
@@ -234,11 +255,19 @@ mod tests {
     const AREA: Rect = Rect::new(0, 0, 1920, 1080);
 
     fn settings() -> LayoutSettings {
-        LayoutSettings { gaps_in: 0, gaps_out: 0, ..LayoutSettings::default() }
+        LayoutSettings {
+            gaps_in: 0,
+            gaps_out: 0,
+            ..LayoutSettings::default()
+        }
     }
 
     fn rect_of(tiles: &[Tile], id: i64) -> Rect {
-        tiles.iter().find(|t| t.id == WindowId(id as isize)).unwrap().rect
+        tiles
+            .iter()
+            .find(|t| t.id == WindowId(id as isize))
+            .unwrap()
+            .rect
     }
 
     #[test]

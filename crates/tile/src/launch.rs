@@ -30,7 +30,9 @@ pub fn exec(command_line: &str) {
     }
     let command_line = command_line.to_owned();
     tokio::spawn(async move {
-        let request = LaunchRequest::Exec { command_line: command_line.clone() };
+        let request = LaunchRequest::Exec {
+            command_line: command_line.clone(),
+        };
         if let Err(e) = launcher::send(&request).await {
             tracing::warn!("no launcher ({e}); running `{command_line}` as administrator");
             run(&command_line);

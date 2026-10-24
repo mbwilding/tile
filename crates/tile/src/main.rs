@@ -61,7 +61,9 @@ fn main() -> anyhow::Result<()> {
     }
     if args.launcher {
         let _guard = init_logging("launcher.log", &args.log);
-        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
         return runtime.block_on(launch::serve());
     }
     let _guard = init_logging("tile.log", &args.log);
@@ -83,7 +85,9 @@ fn main() -> anyhow::Result<()> {
         Loaded::defaults()
     });
 
-    let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
     let result = runtime.block_on(daemon::run(config_path, loaded));
     if let Err(e) = &result {
         tracing::error!("{e:#}");

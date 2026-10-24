@@ -4,7 +4,9 @@ use serde::{Deserialize, Serialize};
 
 /// `%LOCALAPPDATA%\Tile`, for logs and runtime state.
 pub fn data_dir() -> PathBuf {
-    dirs::data_local_dir().unwrap_or_else(|| PathBuf::from(".")).join("Tile")
+    dirs::data_local_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("Tile")
 }
 
 pub fn log_dir() -> PathBuf {
