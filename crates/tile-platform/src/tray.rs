@@ -18,7 +18,11 @@ use winsafe::{self as w, co, gui, prelude::*};
 /// Something that happened on the tray / message thread.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrayEvent {
-    TogglePause,
+    /// Pause or resume the window manager.
+    ToggleTile,
+    /// Pause or resume the key remapper.
+    ToggleKey,
+    ToggleLogging,
     Reload,
     OpenConfig,
     OpenLogs,
@@ -34,8 +38,16 @@ const POLL_TIMER: usize = 1;
 /// The tray icon, living on a dedicated thread with a hidden window and message loop.
 pub struct Tray {
     shutdown: Arc<AtomicBool>,
-    paused: Arc<AtomicBool>,
+    checks: Arc<Checks>,
     thread: Option<thread::JoinHandle<()>>,
+}
+
+/// What the menu's check marks should show, set by the daemon.
+#[derive(Default)]
+struct Checks {
+    tile_paused: AtomicBool,
+    key_paused: AtomicBool,
+    logging: AtomicBool,
 }
 
 /// A 32x32 icon: four rounded tiles in the accent color.
@@ -60,25 +72,47 @@ fn icon() -> Option<Icon> {
 }
 
 struct Items {
-    pause: CheckMenuItem,
+    /// Checked while the window manager runs (not paused).
+    tile: CheckMenuItem,
+    /// Checked while the key remapper runs (not paused).
+    key: CheckMenuItem,
+    logging: CheckMenuItem,
     reload: MenuId,
     open_config: MenuId,
     open_logs: MenuId,
     quit: MenuId,
 }
 
-fn build(paused: bool) -> Result<(TrayIcon, Items), String> {
-    let pause = CheckMenuItem::new("Paused", true, paused, None);
+impl Items {
+    fn sync(&self, checks: &Checks) {
+        let set = |item: &CheckMenuItem, want: bool| {
+            if item.is_checked() != want {
+                item.set_checked(want);
+            }
+        };
+        set(&self.tile, !checks.tile_paused.load(Ordering::Relaxed));
+        set(&self.key, !checks.key_paused.load(Ordering::Relaxed));
+        set(&self.logging, checks.logging.load(Ordering::Relaxed));
+    }
+}
+
+fn build(checks: &Checks) -> Result<(TrayIcon, Items), String> {
+    let tile = CheckMenuItem::new("Tile", true, true, None);
+    let key = CheckMenuItem::new("Key", true, true, None);
+    let logging = CheckMenuItem::new("Logging", true, false, None);
     let reload = MenuItem::new("Reload config", true, None);
     let open_config = MenuItem::new("Open config", true, None);
     let open_logs = MenuItem::new("Open logs", true, None);
     let quit = MenuItem::new("Quit", true, None);
     let menu = Menu::new();
     menu.append_items(&[
-        &pause,
+        &tile,
+        &key,
         &PredefinedMenuItem::separator(),
         &reload,
         &open_config,
+        &PredefinedMenuItem::separator(),
+        &logging,
         &open_logs,
         &PredefinedMenuItem::separator(),
         &quit,
@@ -96,30 +130,42 @@ fn build(paused: bool) -> Result<(TrayIcon, Items), String> {
         open_config: open_config.id().clone(),
         open_logs: open_logs.id().clone(),
         quit: quit.id().clone(),
-        pause,
+        tile,
+        key,
+        logging,
     };
+    items.sync(checks);
     Ok((tray, items))
 }
 
 impl Tray {
     pub fn spawn(tx: mpsc::UnboundedSender<TrayEvent>) -> Self {
         let shutdown = Arc::new(AtomicBool::new(false));
-        let paused = Arc::new(AtomicBool::new(false));
-        let (stop, pause_state) = (shutdown.clone(), paused.clone());
+        let checks = Arc::new(Checks::default());
+        let (stop, state) = (shutdown.clone(), checks.clone());
         let thread = thread::Builder::new()
             .name("tray".into())
-            .spawn(move || run(&tx, &stop, &pause_state))
+            .spawn(move || run(&tx, &stop, &state))
             .expect("spawn tray thread");
         Self {
             shutdown,
-            paused,
+            checks,
             thread: Some(thread),
         }
     }
 
-    /// Reflects the pause state in the menu check mark.
-    pub fn set_paused(&self, paused: bool) {
-        self.paused.store(paused, Ordering::Relaxed);
+    /// Reflects the window manager's pause state in the menu.
+    pub fn set_tile_paused(&self, paused: bool) {
+        self.checks.tile_paused.store(paused, Ordering::Relaxed);
+    }
+
+    /// Reflects the key remapper's pause state in the menu.
+    pub fn set_key_paused(&self, paused: bool) {
+        self.checks.key_paused.store(paused, Ordering::Relaxed);
+    }
+
+    pub fn set_logging(&self, logging: bool) {
+        self.checks.logging.store(logging, Ordering::Relaxed);
     }
 
     /// Removes the icon and stops the tray thread.
@@ -131,11 +177,7 @@ impl Tray {
     }
 }
 
-fn run(
-    tx: &mpsc::UnboundedSender<TrayEvent>,
-    shutdown: &Arc<AtomicBool>,
-    paused: &Arc<AtomicBool>,
-) {
+fn run(tx: &mpsc::UnboundedSender<TrayEvent>, shutdown: &Arc<AtomicBool>, checks: &Arc<Checks>) {
     let wnd = gui::WindowMain::new(gui::WindowMainOpts {
         title: "Tile",
         class_name: "tile-message-window",
@@ -144,9 +186,9 @@ fn run(
     let state: Rc<RefCell<Option<(TrayIcon, Items)>>> = Rc::new(RefCell::new(None));
 
     wnd.on().wm_create({
-        let (wnd, state, paused) = (wnd.clone(), state.clone(), paused.clone());
+        let (wnd, state, checks) = (wnd.clone(), state.clone(), checks.clone());
         move |_| {
-            match build(paused.load(Ordering::Relaxed)) {
+            match build(&checks) {
                 Ok(built) => *state.borrow_mut() = Some(built),
                 Err(e) => tracing::error!("failed to create tray icon: {e}"),
             }
@@ -161,12 +203,12 @@ fn run(
     });
 
     wnd.on().wm_timer(POLL_TIMER, {
-        let (wnd, state, tx, shutdown, paused) = (
+        let (wnd, state, tx, shutdown, checks) = (
             wnd.clone(),
             state.clone(),
             tx.clone(),
             shutdown.clone(),
-            paused.clone(),
+            checks.clone(),
         );
         move || {
             if shutdown.load(Ordering::Relaxed) {
@@ -180,8 +222,12 @@ fn run(
                 return Ok(());
             };
             while let Ok(event) = MenuEvent::receiver().try_recv() {
-                let mapped = if event.id == *items.pause.id() {
-                    Some(TrayEvent::TogglePause)
+                let mapped = if event.id == *items.tile.id() {
+                    Some(TrayEvent::ToggleTile)
+                } else if event.id == *items.key.id() {
+                    Some(TrayEvent::ToggleKey)
+                } else if event.id == *items.logging.id() {
+                    Some(TrayEvent::ToggleLogging)
                 } else if event.id == items.reload {
                     Some(TrayEvent::Reload)
                 } else if event.id == items.open_config {
@@ -197,10 +243,7 @@ fn run(
                     let _ = tx.send(e);
                 }
             }
-            let want = paused.load(Ordering::Relaxed);
-            if items.pause.is_checked() != want {
-                items.pause.set_checked(want);
-            }
+            items.sync(&checks);
             Ok(())
         }
     });

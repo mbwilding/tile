@@ -4,6 +4,7 @@
 mod daemon;
 mod desktops;
 mod launch;
+mod logging;
 mod paths;
 mod remap;
 
@@ -11,7 +12,6 @@ use std::path::PathBuf;
 
 use clap::Parser;
 use tile_config::Loaded;
-use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 /// A dynamic tiling window manager and keyd-style key remapper for Windows.
 #[derive(Parser)]
@@ -20,9 +20,10 @@ struct Args {
     /// Config file to use instead of %APPDATA%\Tile\config.toml.
     #[arg(long, short)]
     config: Option<PathBuf>,
-    /// Log filter, e.g. `info` or `tile=debug`. `RUST_LOG` takes precedence.
-    #[arg(long, default_value = "info")]
-    log: String,
+    /// Log filter, e.g. `info` or `tile=debug`; also switches logging on. `RUST_LOG` takes
+    /// precedence. Without either, the tray's Logging setting decides (default off, `info`).
+    #[arg(long)]
+    log: Option<String>,
     /// Internal: wait for the daemon with this process id to exit, then undo its changes.
     #[arg(long, hide = true)]
     watchdog: Option<u32>,
@@ -41,19 +42,6 @@ fn watchdog(pid: u32) {
     }
 }
 
-/// Logs to a daily `<name>.<date>` file in the log folder.
-fn init_logging(name: &str, filter: &str) -> tracing_appender::non_blocking::WorkerGuard {
-    let appender = tracing_appender::rolling::daily(paths::log_dir(), name);
-    let (file, guard) = tracing_appender::non_blocking(appender);
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(filter));
-    tracing_subscriber::registry()
-        .with(filter)
-        .with(fmt::layer().with_writer(file).with_ansi(false))
-        .with(cfg!(debug_assertions).then(|| fmt::layer().with_writer(std::io::stderr)))
-        .init();
-    guard
-}
-
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     if let Some(pid) = args.watchdog {
@@ -61,13 +49,13 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
     if args.launcher {
-        let _guard = init_logging("launcher.log", &args.log);
+        let _guard = logging::init("launcher.log", args.log.as_deref());
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
         return runtime.block_on(launch::serve());
     }
-    let _guard = init_logging("tile.log", &args.log);
+    let _guard = logging::init("tile.log", args.log.as_deref());
 
     // Never leave windows hidden or without title bars, even if we crash.
     let previous = std::panic::take_hook();

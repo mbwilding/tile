@@ -33,7 +33,8 @@ front of it, so keybinds see keys as remapped: a home-row `Win` works for `Win+`
   switch the window manager and the remapper on or off
 - `tilectl`: dispatch commands, query state as JSON, subscribe to events, check the config,
   install/uninstall
-- Tray icon: pause, reload, open config or logs, quit
+- Tray icon: pause the window manager (Tile) or the key remapper (Key) on their own, reload,
+  open config, switch logging on or off, open logs, quit
 - Everything Tile changes is undone when it stops, including on a crash or a hard kill (a small
   watchdog process handles that). Held keys are released on exit, pause, reload, and when the
   session locks or unlocks
@@ -72,13 +73,15 @@ cargo run --release                  # runs tile.exe
 ```
 
 Only one Tile runs at a time. Release builds have no console, so stop one with `Win+Shift+E`, the
-tray icon or `tilectl dispatch exit`; Ctrl-C in the terminal only stops `cargo`. `tile.exe
+tray icon or `tilectl dispatch exit`; Ctrl-C in the terminal only stops `cargo`. Nothing is
+logged until you tick Logging in the tray (remembered across restarts) or pass `--log`: `tile.exe
 --log tile=debug` logs every keybind it handles.
 
 | Path | Contents |
 | --- | --- |
 | `%APPDATA%\Tile\config.toml` | Config, created on first run |
-| `%LOCALAPPDATA%\Tile\logs` | Daily log files |
+| `%LOCALAPPDATA%\Tile\logs` | Daily log files, while logging is on |
+| `%LOCALAPPDATA%\Tile\settings.json` | Tray settings (logging) |
 | `%LOCALAPPDATA%\Tile\restore.json` | What to undo if Tile dies, while it runs |
 | `C:\Program Files\Tile` | The installed programs |
 
@@ -101,7 +104,7 @@ tray icon or `tilectl dispatch exit`; Ctrl-C in the terminal only stops `cargo`.
 | `Win+[` / `Win+]` / `Win+\` | scrolling: merge into left / right column, split out |
 | `Win+Ctrl+Shift+Left/Right` | move window to previous / next virtual desktop |
 | `Win+Ctrl+P` | show window on all desktops (it floats) |
-| `Win+Shift+R` / `Win+Shift+P` / `Win+Shift+E` | reload config / pause / exit |
+| `Win+Shift+R` / `Win+Shift+P` / `Win+Shift+E` | reload config / pause (or resume) tiling and remapping / exit |
 
 `Win+Ctrl+Left/Right`, `Win+Ctrl+D` and `Win+Tab` are left to Windows' virtual desktops. Bound
 keys take priority over Windows' own `Win+` shortcuts; unbound ones still reach Windows.
@@ -206,7 +209,7 @@ letters, digits, `f1`..`f24`, `left`/`right`/`up`/`down`, `space`, `tab`, `enter
 | `movetodesktop <n\|next\|prev>` | send the window to another virtual desktop |
 | `pin` | show the window on all virtual desktops (it floats) |
 | `lock` | lock the computer (works while Win+L is taken over) |
-| `reload` / `togglepause` / `exit` | reload the config / pause tiling and remapping / quit |
+| `reload` / `togglepause` / `exit` | reload the config / pause both tiling and remapping (or resume both) / quit |
 
 Directions can also be written `left`, `right`, `up` and `down`.
 
