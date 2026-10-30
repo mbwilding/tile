@@ -687,15 +687,22 @@ impl Daemon {
         else {
             return;
         };
-        let exe = action.exe();
-        match action.clone() {
-            Hotkey::Close { close } => {
-                if close {
-                    close_foreground();
-                }
+        if let Hotkey::Close { close } = action {
+            if *close {
+                close_foreground();
             }
-            Hotkey::Run(run) | Hotkey::App { run, .. } => self.launch_or_focus(&run, exe),
+            return;
         }
+        let commands = action.commands();
+        let Some(run) = commands
+            .iter()
+            .find(|c| tile_platform::installed(tile_config::program(c)))
+            .or(commands.last())
+        else {
+            return;
+        };
+        let (run, exe) = (run.clone(), action.exe(run));
+        self.launch_or_focus(&run, exe);
     }
 
     /// Focuses a window of the process `exe` if there is one, otherwise starts `run`.

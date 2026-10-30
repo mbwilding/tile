@@ -96,7 +96,14 @@ the tray's Hotkey item (which starts on). An entry is one of:
 | `"super+b" = "chrome.exe"` | Focus a window of that program, or start it. The program is the command's file name. |
 | `"super+t" = { run = "wt.exe", focus = false }` | Always start a new instance, never focus an existing one. |
 | `"super+e" = { run = "code.cmd", exe = "Code.exe" }` | Start `run`, but focus a window of the process `exe` first if there is one. Use it when the process has another name than the command. |
+| `"super+t" = { run = ["wtd.exe", "wt.exe"], focus = false }` | Run the first command whose program is installed, here Windows Terminal Dev, else Windows Terminal. |
 | `"super+q" = { close = true }` | Close the focused window, like Alt+F4. |
+
+`run` is a command line, so it can take arguments: `{ run = "chrome.exe --new-window", focus =
+false }` opens a new Chrome window every time. A program counts as installed when it is a path that
+exists, is on `PATH` (app execution aliases like `wt.exe` included) or is registered under App
+Paths (like `chrome.exe`). If none is, the last command runs anyway. Without `exe`, the window to
+focus is the program of the command that was picked.
 
 Pressing a launch key again moves on to the next window of that program on the current virtual
 desktop. A key bound in both `[binds]` and `[hotkeys]` runs the `[binds]` entry.
@@ -166,8 +173,8 @@ center_focused = "on_overflow"                  # always | on_overflow | never
 
 # Launch, focus and close keys. Work with tiling off; the tray's Hotkey item switches them.
 [hotkeys]
-"super+b" = { run = "chrome.exe", exe = "chrome.exe" }
-"super+t" = { run = "wt.exe", focus = false }   # a new terminal each time
+"super+b" = { run = "chrome.exe --new-window", focus = false }                  # a new window each time
+"super+t" = { run = ["wtd.exe -w new", "wt.exe -w new"], focus = false }   # Terminal Dev, else Terminal
 "super+q" = { close = true }
 
 [remap]

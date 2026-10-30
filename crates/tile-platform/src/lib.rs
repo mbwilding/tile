@@ -10,6 +10,7 @@ mod hotkeys;
 mod lock;
 mod monitors;
 mod mover;
+mod programs;
 mod token;
 mod tray;
 mod windows;
@@ -21,6 +22,7 @@ pub use hotkeys::{HotkeyEvent, Hotkeys};
 pub use lock::{GRANT_SCRIPT, lock_disabled, lock_workstation, set_lock_disabled};
 pub use monitors::monitors;
 pub use mover::{Animation, Insets, Mover};
+pub use programs::installed;
 pub use token::{is_elevated, user_sid};
 pub use tray::{Tray, TrayEvent};
 pub use windows::{

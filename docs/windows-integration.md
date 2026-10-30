@@ -57,7 +57,9 @@ A program running without admin rights can't move admin windows or see keys pres
 installed Tile runs as administrator, so it manages them like any other window. A Tile started by
 hand without admin rights (e.g. `cargo run`) leaves them alone, and its keybinds and remapping
 don't work while one has focus. Programs Tile starts (`exec` binds and `[hotkeys]`) go through a
-launcher running with your normal rights, so they don't run as administrator.
+launcher running with your normal rights, so they don't run as administrator. A `[hotkeys]` entry
+with a list of commands runs the first whose program Windows can find: on `PATH` (app execution
+aliases like `wt.exe` included) or registered under App Paths (like `chrome.exe`).
 
 ## Secure desktops
 
@@ -73,8 +75,13 @@ they fit their tile anyway.
 
 ## Undoing changes
 
-Tile hides windows on inactive workspaces, removes title bars and sets the Win+L policy. It
-records these in `restore.json` and undoes them on exit, pause, turning tiling off and on panic.
-A watchdog process (`tile.exe --watchdog <pid>`) undoes them if Tile is killed, and the next
-start cleans up anything left over. Held keys are released on exit, pause, reload, and when the
-session locks or unlocks.
+Tile hides windows on inactive workspaces, removes title bars, sets the Win+L policy and blanks
+the system cursors to hide the pointer. It records these in `restore.json` and undoes them on
+exit, pause, turning tiling off and on panic. A watchdog process (`tile.exe --watchdog <pid>`)
+undoes them if Tile is killed, and the next start cleans up anything left over. Closing the
+terminal Tile was started from can kill the watchdog too; a debug build, which has a console,
+cleans up itself when that console closes.
+
+Held keys are released on exit, pause, reload, and when the session locks or unlocks.
+
+Only one Tile runs per session: a second one finds the `Local\Tile` mutex taken and exits.

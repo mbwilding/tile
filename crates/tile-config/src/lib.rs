@@ -14,7 +14,9 @@ use std::{
 
 pub use keys::{Keybind, Modifiers};
 pub use rules::{RuleOutcome, Rules};
-pub use schema::{Animations, Color, Config, Cursor, General, Hotkey, Remap, Rule, Tray};
+pub use schema::{
+    Animations, Color, Config, Cursor, General, Hotkey, Remap, Rule, Run, Tray, program,
+};
 pub use watch::watch;
 
 use tile_core::Command;
@@ -84,6 +86,11 @@ impl Loaded {
                 let bind = keys
                     .parse::<Keybind>()
                     .map_err(|e| ConfigError::Bind(keys.clone(), e))?;
+                if let Hotkey::App { run, .. } = action
+                    && run.commands().is_empty()
+                {
+                    return Err(ConfigError::Bind(keys.clone(), "`run` is empty".into()));
+                }
                 Ok((bind, action.clone()))
             })
             .collect::<Result<_, ConfigError>>()?;
@@ -304,8 +311,11 @@ mod tests {
     #[test]
     fn built_in_hotkeys() {
         let loaded = Loaded::defaults();
-        let exe = |key: &str| loaded.config.hotkeys[key].exe();
-        assert_eq!(exe("super+b").as_deref(), Some("chrome.exe"));
+        let exe = |key: &str| {
+            let hotkey = &loaded.config.hotkeys[key];
+            hotkey.exe(hotkey.commands().first().map_or("", String::as_str))
+        };
+        assert_eq!(exe("super+b"), None);
         assert_eq!(exe("super+t"), None);
         assert_eq!(exe("super+q"), None);
         assert_eq!(loaded.hotkeys.len(), 3);
@@ -316,16 +326,25 @@ mod tests {
         let config = r#"[hotkeys]
 "super+e" = '"C:\Apps\Editor.exe" -n'
 "super+m" = { run = "mail.exe" }
+"super+t" = { run = ["wtd.exe -w new", "wt.exe -w new"] }
 "#;
         let loaded = Loaded::parse(config).unwrap();
-        assert_eq!(loaded.hotkeys.len(), 2);
-        assert_eq!(
-            loaded.config.hotkeys["super+e"].exe().as_deref(),
-            Some("Editor.exe")
-        );
-        assert_eq!(
-            loaded.config.hotkeys["super+m"].exe().as_deref(),
-            Some("mail.exe")
+        assert_eq!(loaded.hotkeys.len(), 3);
+        let hotkey = |key: &str| &loaded.config.hotkeys[key];
+        let e = hotkey("super+e");
+        assert_eq!(e.exe(&e.commands()[0]).as_deref(), Some("Editor.exe"));
+        let m = hotkey("super+m");
+        assert_eq!(m.exe(&m.commands()[0]).as_deref(), Some("mail.exe"));
+        let t = hotkey("super+t");
+        assert_eq!(t.commands(), ["wtd.exe -w new", "wt.exe -w new"]);
+        assert_eq!(t.exe(&t.commands()[1]).as_deref(), Some("wt.exe"));
+        assert!(
+            Loaded::parse(
+                "[hotkeys]
+\"super+x\" = { run = [] }
+"
+            )
+            .is_err()
         );
         assert!(
             Loaded::parse(

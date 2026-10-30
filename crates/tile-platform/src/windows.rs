@@ -499,11 +499,10 @@ pub fn restore_windows(hidden: &[isize], undecorated: &[isize]) {
     }
 }
 
-/// Blocks until the process exits (or can no longer be observed).
-pub fn wait_for_exit(pid: u32) {
-    if let Ok(process) = w::HPROCESS::OpenProcess(co::PROCESS::SYNCHRONIZE, false, pid) {
-        let _ = process.WaitForSingleObject(None);
-    }
+/// Blocks until the process exits. `false` if it can't be watched, so may still be running.
+pub fn wait_for_exit(pid: u32) -> bool {
+    w::HPROCESS::OpenProcess(co::PROCESS::SYNCHRONIZE, false, pid)
+        .is_ok_and(|process| process.WaitForSingleObject(None).is_ok())
 }
 
 /// Whether a top-level window belongs to the shell (desktop, taskbar, Start, task view).

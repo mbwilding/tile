@@ -16,8 +16,8 @@ menu is suppressed), so no separate hotkey program is needed.
 - Native virtual desktops (Windows 11 24H2+): every desktop has its own workspaces and layouts
 - Mouse: hold `Win` and drag a window; drag a tile onto another to swap them, or its edge to
   resize the split
-- App hotkeys that focus a program or start it (`Win+B` Chrome, `Win+T` a new Windows Terminal), and
-  `Win+Q` to close, working even with tiling off
+- App hotkeys that start or focus a program (`Win+B` a new Chrome window, `Win+T` a new Windows
+  Terminal window), and `Win+Q` to close, working even with tiling off
 - Coloured focus borders (Windows 11) and eased move/resize animations
 - Optional title bar removal for tiled windows, with per-app overrides
 - Key remapping in keyd's terms: layers, modifier layers, `overload()`, `overloadt()` and key
@@ -79,7 +79,9 @@ cargo run --release                  # runs tile.exe
 ```
 
 Only one Tile runs at a time. Release builds have no console, so stop one with `Win+Shift+E`, the
-tray icon or `tilectl dispatch exit`; Ctrl-C in the terminal only stops `cargo`.
+tray icon or `tilectl dispatch exit`; Ctrl-C in the terminal only stops `cargo`. Closing the
+terminal can leave windows hidden and the pointer blank until Tile next starts (see
+[Windows integration](docs/windows-integration.md#undoing-changes)).
 
 ## Configuration
 

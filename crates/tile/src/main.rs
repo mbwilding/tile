@@ -35,7 +35,10 @@ struct Args {
 
 /// Runs in a separate process so windows are restored even if the daemon is killed.
 fn watchdog(pid: u32) {
-    tile_platform::wait_for_exit(pid);
+    // A process we can't watch might still be running; restoring now would undo its work.
+    if !tile_platform::wait_for_exit(pid) {
+        return;
+    }
     let restore = paths::load_restore();
     if !restore.is_empty() {
         restore.apply();
@@ -62,6 +65,12 @@ fn main() -> anyhow::Result<()> {
         return runtime.block_on(launch::serve());
     }
     let _guard = logging::init("tile.log", args.log.as_deref());
+    let Some(_instance) = tile_hook::single_instance("Tile") else {
+        tracing::error!("Tile is already running");
+        anyhow::bail!("Tile is already running");
+    };
+    // The watchdog can go down with a closing terminal; debug builds clean up themselves too.
+    tile_hook::on_console_close(|| paths::load_restore().apply());
 
     // Never leave windows hidden or without title bars, even if we crash.
     let previous = std::panic::take_hook();
