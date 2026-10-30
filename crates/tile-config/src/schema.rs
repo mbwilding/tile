@@ -101,6 +101,8 @@ const DEFAULT_BINDS: &[(&str, &str)] = &[
     ("super+f", "togglefloating"),
     ("super+o", "fullscreen"),
     ("super+space", "cyclelayout"),
+    ("super+n", "cyclenext"),
+    ("super+z", "lock"),
     ("super+left", "movefocus l"),
     ("super+right", "movefocus r"),
     ("super+up", "movefocus u"),
@@ -147,7 +149,15 @@ fn default_binds() -> BTreeMap<String, String> {
         .iter()
         .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
         .collect();
-    for n in 1..=9 {
+    // Workspaces 1-5 on the Dvorak home row, like the Hyprland setup; 6 and 7 on their digits.
+    for (n, key) in (1..).zip(["h", "t", "n", "s", "minus"]) {
+        binds.insert(format!("super+ctrl+{key}"), format!("workspace {n}"));
+        binds.insert(
+            format!("super+ctrl+shift+{key}"),
+            format!("movetoworkspace {n}"),
+        );
+    }
+    for n in 6..=7 {
         binds.insert(format!("super+{n}"), format!("workspace {n}"));
         binds.insert(format!("super+shift+{n}"), format!("movetoworkspace {n}"));
     }
@@ -356,7 +366,7 @@ pub struct Master {
 impl Default for Master {
     fn default() -> Self {
         Self {
-            mfact: 0.55,
+            mfact: 0.5,
             count: 1,
             new_is_master: false,
         }
@@ -374,8 +384,8 @@ pub struct Scrolling {
 impl Default for Scrolling {
     fn default() -> Self {
         Self {
-            proportion: 0.5,
-            proportion_presets: vec![0.333, 0.5, 0.667, 1.0],
+            proportion: 0.333,
+            proportion_presets: vec![0.25, 0.333, 0.5, 1.0],
             center_focused: CenterMode::OnOverflow,
         }
     }

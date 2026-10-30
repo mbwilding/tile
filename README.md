@@ -43,7 +43,7 @@ start off the first time; Hotkey starts on. Try:
 | --- | --- |
 | `Win+Arrows` / `Win+H/J/K/L` | move focus, across monitors too |
 | `Win+Shift+Arrows` / `Win+Shift+H/J/K/L` | move the window |
-| `Win+1..9` | switch workspace |
+| `Win+Ctrl+H/T/N/S/-` | switch workspace 1 to 5 |
 | `Win+Space` | next layout |
 | `Win+B` / `Win+T` | Chrome / Windows Terminal |
 | `Win+Q` | close the window |

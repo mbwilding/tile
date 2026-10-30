@@ -22,10 +22,13 @@ binds, so they see keys as remapped: a home-row `Win` works for `Win+` binds.
 | `Win+Enter` | make the window the main one (swap with master) |
 | `Win+F` / `Win+O` | toggle floating / fullscreen |
 | `Win+Space` | next layout |
+| `Win+N` | focus the next window in layout order |
+| `Win+Z` | lock the computer |
 | `Win+Arrows` / `Win+H/J/K/L` | move focus (to the nearest window on the next monitor at the edge) |
 | `Win+Shift+Arrows` / `Win+Shift+H/J/K/L` | move window (to the next monitor at the edge) |
 | `Win+Alt+Arrows` / `Win+Alt+H/J/K/L` | resize |
-| `Win+1..9` / `Win+Shift+1..9` | switch to / move window to workspace |
+| `Win+Ctrl+H/T/N/S/-` / add `Shift` | switch to / move window to workspace 1 to 5 (the Dvorak home row) |
+| `Win+6` / `Win+7` / add `Shift` | switch to / move window to workspace 6 or 7 |
 | `Win+,` / `Win+.` | focus monitor left / right |
 | `Win+S` | flip the dwindle split |
 | `Win+R` / `Win+C` | scrolling: next column width / centre column |

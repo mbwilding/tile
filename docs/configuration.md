@@ -73,11 +73,11 @@ entirely: a feature runs only when both its `general` setting and its tray switc
 | Table | Key | Default | Meaning |
 | --- | --- | --- | --- |
 | `[dwindle]` | `split_ratio` | `0.5` | Share of a split given to the existing window. |
-| `[master]` | `mfact` | `0.55` | Width of the master area, as a share of the monitor. |
+| `[master]` | `mfact` | `0.5` | Width of the master area, as a share of the monitor. |
 | `[master]` | `count` | `1` | Windows in the master area. |
 | `[master]` | `new_is_master` | `false` | New windows become the master. |
-| `[scrolling]` | `proportion` | `0.5` | Width of new columns, as a share of the monitor. |
-| `[scrolling]` | `proportion_presets` | `[0.333, 0.5, 0.667, 1.0]` | Widths `cycleproportion` steps through. |
+| `[scrolling]` | `proportion` | `0.333` | Width of new columns, as a share of the monitor. |
+| `[scrolling]` | `proportion_presets` | `[0.25, 0.333, 0.5, 1.0]` | Widths `cycleproportion` steps through. |
 | `[scrolling]` | `center_focused` | `"on_overflow"` | When to centre the focused column: `always`, `on_overflow` (when it would otherwise be partly off screen) or `never`. |
 
 ### `[binds]`
@@ -153,13 +153,13 @@ bezier = [0.0, 0.75, 0.15, 1.0]   # cubic-bezier control points (x1, y1, x2, y2)
 split_ratio = 0.5             # share of a split given to the existing window
 
 [master]
-mfact = 0.55                  # width of the master area
+mfact = 0.5                   # width of the master area
 count = 1                     # windows in the master area
 new_is_master = false         # new windows become master
 
 [scrolling]
-proportion = 0.5              # width of new columns, as a share of the monitor
-proportion_presets = [0.333, 0.5, 0.667, 1.0]   # widths `cycleproportion` steps through
+proportion = 0.333            # width of new columns, as a share of the monitor
+proportion_presets = [0.25, 0.333, 0.5, 1.0]     # widths `cycleproportion` steps through
 center_focused = "on_overflow"                  # always | on_overflow | never
 
 # Launch, focus and close keys. Work with tiling off; the tray's Hotkey item switches them.
@@ -224,24 +224,20 @@ o = "9"
 u = "7"
 
 [binds]
-"super+1" = "workspace 1"
-"super+2" = "workspace 2"
-"super+3" = "workspace 3"
-"super+4" = "workspace 4"
-"super+5" = "workspace 5"
+"super+ctrl+h" = "workspace 1"
+"super+ctrl+t" = "workspace 2"
+"super+ctrl+n" = "workspace 3"
+"super+ctrl+s" = "workspace 4"
+"super+ctrl+minus" = "workspace 5"
+"super+ctrl+shift+h" = "movetoworkspace 1"
+"super+ctrl+shift+t" = "movetoworkspace 2"
+"super+ctrl+shift+n" = "movetoworkspace 3"
+"super+ctrl+shift+s" = "movetoworkspace 4"
+"super+ctrl+shift+minus" = "movetoworkspace 5"
 "super+6" = "workspace 6"
 "super+7" = "workspace 7"
-"super+8" = "workspace 8"
-"super+9" = "workspace 9"
-"super+shift+1" = "movetoworkspace 1"
-"super+shift+2" = "movetoworkspace 2"
-"super+shift+3" = "movetoworkspace 3"
-"super+shift+4" = "movetoworkspace 4"
-"super+shift+5" = "movetoworkspace 5"
 "super+shift+6" = "movetoworkspace 6"
 "super+shift+7" = "movetoworkspace 7"
-"super+shift+8" = "movetoworkspace 8"
-"super+shift+9" = "movetoworkspace 9"
 "super+left" = "movefocus l"
 "super+right" = "movefocus r"
 "super+up" = "movefocus u"
@@ -275,6 +271,8 @@ u = "7"
 "super+f" = "togglefloating"
 "super+o" = "fullscreen"
 "super+space" = "cyclelayout"
+"super+n" = "cyclenext"
+"super+z" = "lock"
 "super+s" = "togglesplit"
 "super+r" = "cycleproportion"
 "super+c" = "centercolumn"
