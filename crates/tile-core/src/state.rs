@@ -1060,7 +1060,7 @@ impl State {
         }
         self.attach(id, n);
         if follow {
-            return self.focus_workspace(n);
+            return self.switch_workspace(label);
         }
         self.focused = None;
         match self
@@ -1276,6 +1276,18 @@ mod tests {
         let effects = s.apply(&Command::Workspace(1));
         assert!(effects.contains(&Effect::Show(W)));
         assert!(effects.contains(&Effect::Focus(W)));
+    }
+
+    #[test]
+    fn move_to_workspace_follows_the_window() {
+        let mut s = state(1);
+        open(&mut s, W);
+        open(&mut s, X);
+        let effects = s.apply(&Command::MoveToWorkspace(3));
+        assert!(effects.contains(&Effect::Focus(X)));
+        assert!(effects.contains(&Effect::Hide(W)));
+        assert_eq!(s.focused(), Some(X));
+        assert_eq!(s.focused_workspace(), Some(3));
     }
 
     #[test]

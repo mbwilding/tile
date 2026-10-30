@@ -1,7 +1,7 @@
 //! The Win32 calls winsafe doesn't wrap safely: `WH_KEYBOARD_LL` hooks that can block key-ups
-//! and report scancodes, `SendInput` by scancode, session notifications and swapping the system
-//! cursors (to hide the pointer). This is the only crate in Tile with `unsafe`, and it exposes
-//! a safe API.
+//! and report scancodes, `SendInput` by scancode, session notifications, swapping the system
+//! cursors (to hide the pointer), the single-instance mutex and the console close handler.
+//! This is the only crate in Tile with `unsafe`, and it exposes a safe API.
 
 use std::{
     cell::RefCell,
@@ -9,20 +9,26 @@ use std::{
     io,
     panic::{AssertUnwindSafe, catch_unwind},
     ptr,
-    sync::mpsc,
+    sync::{OnceLock, mpsc},
     thread::{self, JoinHandle},
     time::Instant,
 };
 
 use windows_sys::Win32::{
-    Foundation::{LPARAM, LRESULT, WPARAM},
+    Foundation::{
+        CloseHandle, ERROR_ALREADY_EXISTS, FALSE, GetLastError, HANDLE, LPARAM, LRESULT, TRUE,
+        WPARAM,
+    },
     System::{
+        Console::{
+            CTRL_CLOSE_EVENT, CTRL_LOGOFF_EVENT, CTRL_SHUTDOWN_EVENT, SetConsoleCtrlHandler,
+        },
         LibraryLoader::GetModuleHandleW,
         RemoteDesktop::{
             NOTIFY_FOR_THIS_SESSION, WTSRegisterSessionNotification,
             WTSUnRegisterSessionNotification,
         },
-        Threading::{GetCurrentThreadId, INFINITE},
+        Threading::{CreateMutexW, GetCurrentThreadId, INFINITE},
     },
     UI::{
         Input::KeyboardAndMouse::{
@@ -42,6 +48,7 @@ use windows_sys::Win32::{
         },
     },
 };
+use windows_sys::core::BOOL;
 
 /// `dwExtraInfo` on every key we send, to recognise our own input.
 pub const TAG: usize = 0x4B45_5900;
@@ -326,6 +333,54 @@ pub fn restore_cursors() -> bool {
     unsafe { SystemParametersInfoW(SPI_SETCURSORS, 0, ptr::null_mut(), 0) != 0 }
 }
 
+/// Holds the named mutex [`single_instance`] took; dropping it lets another instance start.
+pub struct Instance(HANDLE);
+
+impl Drop for Instance {
+    fn drop(&mut self) {
+        // SAFETY: we own the handle and close it once.
+        unsafe { CloseHandle(self.0) };
+    }
+}
+
+/// Takes the session-wide mutex `name`, or `None` if another process holds it. An elevated
+/// holder counts too: opening its mutex is denied rather than shared.
+pub fn single_instance(name: &str) -> Option<Instance> {
+    let name: Vec<u16> = format!(r"Local\{name}").encode_utf16().chain([0]).collect();
+    // SAFETY: `name` is NUL-terminated and outlives the call; no security attributes.
+    let handle = unsafe { CreateMutexW(ptr::null(), FALSE, name.as_ptr()) };
+    // SAFETY: reads the calling thread's last error, set by `CreateMutexW` just above.
+    let existed = unsafe { GetLastError() } == ERROR_ALREADY_EXISTS;
+    if handle.is_null() {
+        return None;
+    }
+    let instance = Instance(handle);
+    (!existed).then_some(instance)
+}
+
+static ON_CONSOLE_CLOSE: OnceLock<fn()> = OnceLock::new();
+
+/// Runs `f` when our console closes or the user logs off or shuts down, before Windows ends the
+/// process. Ctrl+C is left to the caller. Only the first call registers.
+pub fn on_console_close(f: fn()) {
+    unsafe extern "system" fn handler(event: u32) -> BOOL {
+        if matches!(
+            event,
+            CTRL_CLOSE_EVENT | CTRL_LOGOFF_EVENT | CTRL_SHUTDOWN_EVENT
+        ) && let Some(f) = ON_CONSOLE_CLOSE.get()
+        {
+            f();
+        }
+        // Not handled: the next handler (or the default, ending the process) runs.
+        FALSE
+    }
+    if ON_CONSOLE_CLOSE.set(f).is_ok() {
+        // SAFETY: `handler` is a valid `extern "system"` handler that lives for the whole
+        // process and only reads a `OnceLock`.
+        unsafe { SetConsoleCtrlHandler(Some(handler), TRUE) };
+    }
+}
+
 /// Asks for `WM_WTSSESSION_CHANGE` (lock, unlock, …) to be sent to the window with handle
 /// `hwnd`.
 pub fn watch_sessions(hwnd: isize) -> bool {
@@ -465,4 +520,19 @@ unsafe extern "system" fn mouse_proc(code: i32, wparam: WPARAM, lparam: LPARAM) 
     }
     // SAFETY: hands the unchanged arguments on to the next hook.
     unsafe { CallNextHookEx(ptr::null_mut(), code, wparam, lparam) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn single_instance_is_exclusive() {
+        let name = format!("tile-test-{}", std::process::id());
+        let first = single_instance(&name);
+        assert!(first.is_some());
+        assert!(single_instance(&name).is_none());
+        drop(first);
+        assert!(single_instance(&name).is_some());
+    }
 }

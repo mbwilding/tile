@@ -16,8 +16,8 @@ binds, so they see keys as remapped: a home-row `Win` works for `Win+` binds.
 
 | Keys | Action |
 | --- | --- |
-| `Win+B` | focus Chrome, or open it |
-| `Win+T` | open a new Windows Terminal |
+| `Win+B` | open a new Chrome window |
+| `Win+T` | open a new Windows Terminal Dev window, or Windows Terminal without it |
 | `Win+Q` | close the window (like Alt+F4) |
 | `Win+Enter` | make the window the main one (swap with master) |
 | `Win+F` / `Win+O` | toggle floating / fullscreen |

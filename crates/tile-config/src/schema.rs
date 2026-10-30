@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, fmt, str::FromStr};
+use std::{collections::BTreeMap, fmt, path::Path, str::FromStr};
 
 use serde::{Deserialize, Serialize};
 use tile_core::{LayoutKind, LayoutSettings, animation::Bezier, layout::CenterMode};
@@ -33,7 +33,7 @@ pub enum Hotkey {
     /// process `exe` instead if there is one. `{ run = "wt.exe", focus = false }` always starts
     /// a new one.
     App {
-        run: String,
+        run: Run,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         exe: Option<String>,
         /// Focus an existing window of the program rather than starting another. Default on.
@@ -44,24 +44,60 @@ pub enum Hotkey {
     Close { close: bool },
 }
 
-impl Hotkey {
-    /// The process whose window to focus rather than starting `run` again.
-    pub fn exe(&self) -> Option<String> {
+/// The command line of a [`Hotkey::App`]: one, or a list where the first whose program is
+/// installed runs, like `["wtd.exe", "wt.exe"]`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Run {
+    One(String),
+    FirstOf(Vec<String>),
+}
+
+impl Run {
+    /// The command lines in the order they are tried.
+    pub fn commands(&self) -> &[String] {
         match self {
-            Self::Run(run) => {
-                let run = run.trim();
-                let program = match run.strip_prefix('"') {
-                    Some(quoted) => quoted.split('"').next().unwrap_or(quoted),
-                    None => run.split_whitespace().next().unwrap_or(run),
-                };
-                std::path::Path::new(program)
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-            }
-            Self::App { focus: false, .. } => None,
-            Self::App { exe, run, .. } => exe.clone().or_else(|| Self::Run(run.clone()).exe()),
-            Self::Close { .. } => None,
+            Self::One(command) => std::slice::from_ref(command),
+            Self::FirstOf(commands) => commands,
         }
+    }
+}
+
+impl Hotkey {
+    /// The command lines to try in order, the first whose program is installed running.
+    /// Empty for [`Hotkey::Close`].
+    pub fn commands(&self) -> &[String] {
+        match self {
+            Self::Run(run) => std::slice::from_ref(run),
+            Self::App { run, .. } => run.commands(),
+            Self::Close { .. } => &[],
+        }
+    }
+
+    /// The process whose window to focus rather than starting `command` (one of
+    /// [`Hotkey::commands`]) again.
+    pub fn exe(&self, command: &str) -> Option<String> {
+        match self {
+            Self::Run(_)
+            | Self::App {
+                exe: None,
+                focus: true,
+                ..
+            } => Path::new(program(command))
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned()),
+            Self::App { focus: false, .. } | Self::Close { .. } => None,
+            Self::App { exe, .. } => exe.clone(),
+        }
+    }
+}
+
+/// The program a command line starts: its first word, or the quoted path it starts with.
+pub fn program(command: &str) -> &str {
+    let command = command.trim();
+    match command.strip_prefix('"') {
+        Some(quoted) => quoted.split('"').next().unwrap_or(quoted),
+        None => command.split_whitespace().next().unwrap_or(command),
     }
 }
 
@@ -78,15 +114,15 @@ fn default_hotkeys() -> BTreeMap<String, Hotkey> {
         (
             "super+b".to_string(),
             Hotkey::App {
-                run: "chrome.exe".into(),
-                exe: Some("chrome.exe".into()),
-                focus: true,
+                run: Run::One("chrome.exe --new-window".into()),
+                exe: None,
+                focus: false,
             },
         ),
         (
             "super+t".to_string(),
             Hotkey::App {
-                run: "wt.exe".into(),
+                run: Run::FirstOf(vec!["wtd.exe -w new".into(), "wt.exe -w new".into()]),
                 exe: None,
                 focus: false,
             },

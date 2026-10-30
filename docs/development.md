@@ -18,7 +18,7 @@ everything. See the README for running a build without installing it.
 | `tile-remap` | The remapping engine: keyd's layers and overloads as a pure state machine (tested) |
 | `tile-config` | TOML schema, keybind parsing, window rules, remap layers, the tray switches and file watching |
 | `tile-hook` | The low-level keyboard and mouse hooks, `SendInput` and other raw calls: the only `unsafe` |
-| `tile-platform` | Win32: window events, placement and animation, hotkeys, the Win+drag mouse hook, tray, virtual desktops |
+| `tile-platform` | Win32: window events, placement and animation, hotkeys, the Win+drag mouse hook, tray, virtual desktops, finding installed programs |
 | `tile-ipc` | Named-pipe JSON protocol |
 | `tile` | The daemon (`tile.exe`) |
 | `tilectl` | The command-line tool (`tilectl.exe`), including install/uninstall |
