@@ -13,7 +13,8 @@ use tile_platform::{
     Animation, Discovered, DragEvent, HotkeyEvent, Hotkeys, Mover, PlaceError, Tray, TrayEvent,
     WinDrag, WinEvent, WinEventHooks, Windows, close_foreground, cursor_pos,
     desktops::{self as vd, DesktopChange, DesktopId},
-    focus_exe, foreground, is_shell_window, monitors, mouse_button_down, set_cursor_pos,
+    focus_desktop, focus_exe, foreground, is_shell_window, monitors, mouse_button_down,
+    set_cursor_pos,
 };
 use tokio::{
     sync::mpsc::{self, UnboundedReceiver, UnboundedSender},
@@ -60,12 +61,6 @@ struct Receivers {
     remap: UnboundedReceiver<Notice>,
 }
 
-/// A window being moved by Win + drag, and where inside its outer frame the pointer grabbed it.
-struct Drag {
-    id: WindowId,
-    grab: (i32, i32),
-}
-
 struct Daemon {
     desktops: Desktops,
     windows: Windows,
@@ -75,7 +70,7 @@ struct Daemon {
     hotkeys: Hotkeys,
     win_drag: WinDrag,
     /// The window being dragged with Win + left button.
-    drag: Option<Drag>,
+    drag: Option<WindowId>,
     tray: Tray,
     /// The window manager is paused (tray "Tile").
     paused: bool,
@@ -376,17 +371,7 @@ impl Daemon {
                     HotkeyEvent::Hotkey(index) => self.run_hotkey(index),
                     HotkeyEvent::Typed => self.hide_cursor(),
                 },
-                Some(mut event) = rx.drags.recv() => {
-                    // The mouse reports far faster than windows can move: only the newest
-                    // position matters, but a press or release must never be skipped.
-                    while matches!(event, DragEvent::Move { .. }) {
-                        match rx.drags.try_recv() {
-                            Ok(next) => event = next,
-                            Err(_) => break,
-                        }
-                    }
-                    self.on_drag(event);
-                }
+                Some(event) = rx.drags.recv() => self.on_drag(event),
                 Some(event) = rx.tray.recv() => self.on_tray(event),
                 Some(incoming) = rx.ipc.recv() => self.on_ipc(incoming),
                 Some(()) = rx.config.recv() => reload_at = Some(Instant::now() + RELOAD_DEBOUNCE),
@@ -937,36 +922,24 @@ impl Daemon {
         self.cursor_check_at = Some(Instant::now() + CURSOR_POLL);
     }
 
-    /// Win + left-drag: the window follows the pointer, and is re-tiled where it is dropped.
+    /// Win + left-drag: the hook moves the window; here it is kept clear of tiling while it
+    /// moves, and re-tiled where it is dropped.
     fn on_drag(&mut self, event: DragEvent) {
         match event {
-            DragEvent::Start { window, x, y } => {
+            DragEvent::Start { window } => {
                 let id = WindowId(window);
                 if !self.desktops.is_managed(id) || self.desktops.is_hidden(id) {
                     return;
                 }
-                let Some(outer) = self.windows.outer_rect(id) else {
-                    return;
-                };
                 self.windows.focus(id);
                 self.moving.insert(id);
                 self.tweens.remove(&id);
-                self.drag = Some(Drag {
-                    id,
-                    grab: (x - outer.x, y - outer.y),
-                });
-            }
-            DragEvent::Move { x, y } => {
-                if let Some(drag) = &self.drag {
-                    self.windows
-                        .move_to(drag.id, x - drag.grab.0, y - drag.grab.1);
-                }
+                self.drag = Some(id);
             }
             DragEvent::End { x, y } => {
-                let Some(drag) = self.drag.take() else {
+                let Some(id) = self.drag.take() else {
                     return;
                 };
-                let id = drag.id;
                 self.moving.remove(&id);
                 self.placed.remove(&id);
                 if let Some(rect) = self.windows.frame(id) {
@@ -1161,6 +1134,11 @@ impl Daemon {
 
     fn on_foreground(&mut self, raw: isize) {
         let id = WindowId(raw);
+        tracing::info!(
+            "foreground {raw:#x} {:?} managed={}",
+            self.windows.info(id).map(|i| i.exe),
+            self.desktops.is_managed(id)
+        );
         if !self.desktops.is_managed(id) {
             self.try_manage(raw);
             if !self.desktops.is_managed(id) {
@@ -1426,6 +1404,12 @@ impl Daemon {
                 }
             })
             .collect();
+        // Before the old window is hidden: hiding the focused window makes Windows pick another
+        // one, possibly on another monitor, and we would follow it.
+        if effects.contains(&Effect::Defocus) {
+            tracing::info!("nothing to focus here: focusing the desktop");
+            focus_desktop();
+        }
         let mut failed = Vec::new();
         let mut focus_refused = false;
         for effect in effects {
@@ -1450,6 +1434,7 @@ impl Daemon {
                         focus_refused = true;
                     }
                 }
+                Effect::Defocus => {}
                 Effect::Close(id) => self.windows.close(id),
                 Effect::Exec(line) => launch::exec(&line),
             }

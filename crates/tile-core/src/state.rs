@@ -46,6 +46,9 @@ pub enum Effect {
     Show(WindowId),
     Hide(WindowId),
     Focus(WindowId),
+    /// Nothing on the focused monitor can take focus: put it on the desktop, so Windows
+    /// doesn't pick a window on another monitor.
+    Defocus,
     Close(WindowId),
     Exec(String),
 }
@@ -91,6 +94,8 @@ struct Monitor {
 #[derive(Debug, Clone)]
 struct Workspace {
     monitor: MonitorId,
+    /// The number the user knows it by; several monitors can each have a workspace 1.
+    label: u8,
     layout: LayoutState,
     floating: Vec<WindowId>,
     minimized: Vec<WindowId>,
@@ -100,9 +105,10 @@ struct Workspace {
 }
 
 impl Workspace {
-    fn new(monitor: MonitorId, kind: LayoutKind, s: &LayoutSettings) -> Self {
+    fn new(monitor: MonitorId, label: u8, kind: LayoutKind, s: &LayoutSettings) -> Self {
         Self {
             monitor,
+            label,
             layout: LayoutState::new(kind, s),
             floating: Vec::new(),
             minimized: Vec::new(),
@@ -165,7 +171,10 @@ struct Managed {
 #[derive(Debug, Clone)]
 pub struct State {
     monitors: Vec<Monitor>,
+    /// Keyed by an internal number, not the label: see `labels`.
     workspaces: BTreeMap<u8, Workspace>,
+    /// The workspace a monitor has for a label.
+    labels: HashMap<(MonitorId, u8), u8>,
     windows: HashMap<WindowId, Managed>,
     hidden: HashSet<WindowId>,
     focused: Option<WindowId>,
@@ -179,6 +188,7 @@ impl State {
         Self {
             monitors: Vec::new(),
             workspaces: BTreeMap::new(),
+            labels: HashMap::new(),
             windows: HashMap::new(),
             hidden: HashSet::new(),
             focused: None,
@@ -227,12 +237,18 @@ impl State {
         self.monitors.get(self.focused_monitor).map(|m| &m.info)
     }
 
+    /// The number of the focused monitor's workspace.
     pub fn focused_workspace(&self) -> Option<u8> {
+        let key = self.focused_key()?;
+        self.workspaces.get(&key).map(|w| w.label)
+    }
+
+    fn focused_key(&self) -> Option<u8> {
         self.monitors.get(self.focused_monitor).map(|m| m.workspace)
     }
 
     pub fn active_layout(&self) -> Option<LayoutKind> {
-        let ws = self.focused_workspace()?;
+        let ws = self.focused_key()?;
         self.workspaces.get(&ws).map(|w| w.layout.kind())
     }
 
@@ -288,13 +304,62 @@ impl State {
         }
     }
 
-    fn ensure_workspace(&mut self, n: u8, monitor: MonitorId) {
-        if !self.workspaces.contains_key(&n) {
-            let area = self
-                .monitor_index(monitor)
-                .map_or_else(Rect::default, |i| self.monitors[i].info.work_area);
-            let ws = Workspace::new(monitor, self.layout_for(area), &self.settings);
-            self.workspaces.insert(n, ws);
+    /// The workspace `monitor` has for `label`, created on first use.
+    fn workspace_for(&mut self, label: u8, monitor: MonitorId) -> u8 {
+        if let Some(key) = self.labels.get(&(monitor, label)) {
+            return *key;
+        }
+        let key = (1..=u8::MAX)
+            .find(|k| !self.workspaces.contains_key(k))
+            .unwrap_or(u8::MAX);
+        let area = self
+            .monitor_index(monitor)
+            .map_or_else(Rect::default, |i| self.monitors[i].info.work_area);
+        let ws = Workspace::new(monitor, label, self.layout_for(area), &self.settings);
+        self.workspaces.insert(key, ws);
+        self.labels.insert((monitor, label), key);
+        key
+    }
+
+    /// Moves the windows of workspaces whose monitor is gone onto the first monitor's workspace
+    /// with the same number.
+    fn rehome_orphans(&mut self, present: &HashSet<MonitorId>) {
+        let fallback = self.monitors[0].info.id;
+        let orphans: Vec<u8> = self
+            .workspaces
+            .iter()
+            .filter(|(_, w)| !present.contains(&w.monitor))
+            .map(|(key, _)| *key)
+            .collect();
+        for key in orphans {
+            let Some(old) = self.workspaces.remove(&key) else {
+                continue;
+            };
+            self.labels.retain(|_, k| *k != key);
+            let dest = self.workspace_for(old.label, fallback);
+            for id in old
+                .layout
+                .windows()
+                .into_iter()
+                .chain(old.floating.iter().copied())
+            {
+                if self.is_floating(id) {
+                    let rect = self.windows[&id].float_rect;
+                    let centered = self.centered(rect, dest);
+                    if let Some(m) = self.windows.get_mut(&id) {
+                        m.float_rect = centered;
+                    }
+                }
+                self.attach(id, dest);
+            }
+            for id in old.minimized {
+                if let Some(m) = self.windows.get_mut(&id) {
+                    m.workspace = dest;
+                }
+                if let Some(ws) = self.workspaces.get_mut(&dest) {
+                    ws.minimized.push(id);
+                }
+            }
         }
     }
 
@@ -302,61 +367,34 @@ impl State {
         self.monitors.get(self.focused_monitor).map(|m| m.info.id)
     }
 
-    /// Replaces the monitor set, keeping workspaces on monitors that still exist.
+    /// Replaces the monitor set. Workspaces stay with their monitor; those of a monitor that
+    /// went away are merged into the first monitor's.
     pub fn set_monitors(&mut self, infos: Vec<MonitorInfo>) -> Vec<Effect> {
         if infos.is_empty() {
             return Vec::new();
         }
         let old = std::mem::take(&mut self.monitors);
         let present: HashSet<MonitorId> = infos.iter().map(|i| i.id).collect();
-        let mut used: HashSet<u8> = HashSet::new();
         for info in infos {
-            let previous = old
-                .iter()
-                .find(|m| m.info.id == info.id)
-                .map(|m| m.workspace)
-                .filter(|ws| !used.contains(ws));
-            let ws = previous.unwrap_or_else(|| {
-                let owned = self
-                    .workspaces
-                    .iter()
-                    .find(|(n, w)| w.monitor == info.id && !used.contains(*n))
-                    .map(|(n, _)| *n);
-                owned.unwrap_or_else(|| {
-                    (1..=u8::MAX)
-                        .find(|n| {
-                            !used.contains(n)
-                                && self
-                                    .workspaces
-                                    .get(n)
-                                    .is_none_or(|w| !present.contains(&w.monitor))
-                        })
-                        .unwrap_or(u8::MAX)
-                })
-            });
-            used.insert(ws);
-            let rotated = old.iter().find(|m| m.info.id == info.id).is_some_and(|m| {
+            let before = old.iter().find(|m| m.info.id == info.id);
+            let rotated = before.is_some_and(|m| {
                 (m.info.work_area.h > m.info.work_area.w) != (info.work_area.h > info.work_area.w)
             });
+            let kept = before.map(|m| m.workspace);
             let (id, area) = (info.id, info.work_area);
             self.monitors.push(Monitor {
                 info,
-                workspace: ws,
+                workspace: kept.unwrap_or(0),
             });
-            self.ensure_workspace(ws, id);
-            if let Some(w) = self.workspaces.get_mut(&ws) {
-                w.monitor = id;
+            let ws = kept.unwrap_or_else(|| self.workspace_for(1, id));
+            if let Some(m) = self.monitors.last_mut() {
+                m.workspace = ws;
             }
             if rotated {
                 self.adopt_orientation(ws, area);
             }
         }
-        let fallback = self.monitors[0].info.id;
-        for ws in self.workspaces.values_mut() {
-            if !present.contains(&ws.monitor) {
-                ws.monitor = fallback;
-            }
-        }
+        self.rehome_orphans(&present);
         self.focused_monitor = self.focused_monitor.min(self.monitors.len() - 1);
         self.sync()
     }
@@ -445,11 +483,9 @@ impl State {
     }
 
     fn focus_workspace_with(&mut self, n: u8, preferred: Option<WindowId>) -> Vec<Effect> {
-        let Some(fallback) = self.focused_monitor_id() else {
+        let Some(owner) = self.workspaces.get(&n).map(|w| w.monitor) else {
             return Vec::new();
         };
-        self.ensure_workspace(n, fallback);
-        let owner = self.workspaces[&n].monitor;
         let index = self.monitor_index(owner).unwrap_or(self.focused_monitor);
         self.monitors[index].workspace = n;
         if let Some(ws) = self.workspaces.get_mut(&n) {
@@ -462,7 +498,7 @@ impl State {
         }
         self.focused = target;
         let mut effects = self.sync();
-        effects.extend(target.map(Effect::Focus));
+        effects.push(target.map_or(Effect::Defocus, Effect::Focus));
         effects
     }
 
@@ -595,8 +631,11 @@ impl State {
             .monitor
             .filter(|i| *i < self.monitors.len())
             .unwrap_or(self.focused_monitor);
-        let n = opts.workspace.unwrap_or(self.monitors[monitor].workspace);
-        self.ensure_workspace(n, self.monitors[monitor].info.id);
+        let monitor_id = self.monitors[monitor].info.id;
+        let n = match opts.workspace {
+            Some(label) => self.workspace_for(label, monitor_id),
+            None => self.monitors[monitor].workspace,
+        };
         self.windows.insert(
             id,
             Managed {
@@ -622,10 +661,13 @@ impl State {
         self.hidden.remove(&id);
         if self.focused == Some(id) {
             self.focused = None;
-            if let Some(next) = self.workspaces.get(&n).and_then(Workspace::focus_candidate)
-                && self.showing(n).is_some()
-            {
-                return self.focus_window(next);
+            if self.showing(n).is_some() {
+                if let Some(next) = self.workspaces.get(&n).and_then(Workspace::focus_candidate) {
+                    return self.focus_window(next);
+                }
+                let mut effects = self.sync();
+                effects.push(Effect::Defocus);
+                return effects;
             }
         }
         self.sync()
@@ -660,10 +702,18 @@ impl State {
         if let Some(ws) = self.workspaces.get_mut(&n) {
             ws.minimized.push(id);
         }
-        if self.focused == Some(id) {
+        let was_focused = self.focused == Some(id);
+        if was_focused {
             self.focused = None;
         }
-        self.sync()
+        let mut effects = self.sync();
+        if was_focused
+            && self.showing(n).is_some()
+            && self.workspaces[&n].focus_candidate().is_none()
+        {
+            effects.push(Effect::Defocus);
+        }
+        effects
     }
 
     pub fn window_restored(&mut self, id: WindowId) -> Vec<Effect> {
@@ -745,7 +795,7 @@ impl State {
             Command::ResizeActive(dx, dy) => self.resize_active(*dx, *dy),
             Command::CycleNext => self.cycle(true),
             Command::CyclePrev => self.cycle(false),
-            Command::Workspace(n) => self.focus_workspace(*n),
+            Command::Workspace(n) => self.switch_workspace(*n),
             Command::MoveToWorkspace(n) => self.move_to_workspace(*n, true),
             Command::MoveToWorkspaceSilent(n) => self.move_to_workspace(*n, false),
             Command::FocusMonitor(dir) => self.focus_monitor(*dir),
@@ -831,7 +881,7 @@ impl State {
     }
 
     fn move_focus(&mut self, dir: Direction) -> Vec<Effect> {
-        let Some(n) = self.focused_workspace() else {
+        let Some(n) = self.focused_key() else {
             return Vec::new();
         };
         let current = self.active().filter(|(_, ws)| *ws == n).map(|(id, _)| id);
@@ -884,7 +934,7 @@ impl State {
 
     /// Focuses the next / previous window of the focused workspace in layout order, wrapping.
     fn cycle(&mut self, forward: bool) -> Vec<Effect> {
-        let Some(n) = self.focused_workspace() else {
+        let Some(n) = self.focused_key() else {
             return Vec::new();
         };
         let Some(ws) = self.workspaces.get(&n) else {
@@ -975,17 +1025,32 @@ impl State {
         self.sync()
     }
 
-    fn move_to_workspace(&mut self, n: u8, follow: bool) -> Vec<Effect> {
+    /// Shows workspace `label` on the focused monitor, and on every monitor when they are synced.
+    fn switch_workspace(&mut self, label: u8) -> Vec<Effect> {
+        let Some(focused) = self.focused_monitor_id() else {
+            return Vec::new();
+        };
+        if !self.settings.independent_workspaces {
+            for i in 0..self.monitors.len() {
+                let id = self.monitors[i].info.id;
+                self.monitors[i].workspace = self.workspace_for(label, id);
+            }
+        }
+        let key = self.workspace_for(label, focused);
+        self.focus_workspace(key)
+    }
+
+    fn move_to_workspace(&mut self, label: u8, follow: bool) -> Vec<Effect> {
         let Some((id, current)) = self.active() else {
             return Vec::new();
         };
-        if current == n {
-            return Vec::new();
-        }
         let Some(monitor) = self.focused_monitor_id() else {
             return Vec::new();
         };
-        self.ensure_workspace(n, monitor);
+        let n = self.workspace_for(label, monitor);
+        if current == n {
+            return Vec::new();
+        }
         let old_area = self.area_of(current);
         let new_area = self.area_of(n);
         self.detach(id);
@@ -1009,7 +1074,7 @@ impl State {
     }
 
     fn set_layout(&mut self, kind: LayoutKind) -> Vec<Effect> {
-        let Some(n) = self.focused_workspace() else {
+        let Some(n) = self.focused_key() else {
             return Vec::new();
         };
         let area = self.area_of(n);
@@ -1051,7 +1116,7 @@ impl State {
                 title: m.info.title.clone(),
                 class: m.info.class.clone(),
                 exe: m.info.exe.clone(),
-                workspace: m.workspace,
+                workspace: self.workspaces.get(&m.workspace).map_or(0, |w| w.label),
                 floating: m.floating,
                 fullscreen: self.workspaces.get(&m.workspace).and_then(|w| w.fullscreen)
                     == Some(*id),
@@ -1069,11 +1134,11 @@ impl State {
     }
 
     pub fn snapshot_workspaces(&self) -> Vec<WorkspaceSnapshot> {
-        let focused_ws = self.focused_workspace();
+        let focused_ws = self.focused_key();
         self.workspaces
             .iter()
             .map(|(n, ws)| WorkspaceSnapshot {
-                id: *n,
+                id: ws.label,
                 monitor: self.monitor_index(ws.monitor),
                 visible: self.showing(*n).is_some(),
                 focused: focused_ws == Some(*n),
@@ -1091,7 +1156,7 @@ impl State {
                 index: i,
                 rect: m.info.rect,
                 work_area: m.info.work_area,
-                workspace: m.workspace,
+                workspace: self.workspaces.get(&m.workspace).map_or(0, |w| w.label),
                 focused: i == self.focused_monitor,
             })
             .collect()
@@ -1115,9 +1180,14 @@ mod tests {
     }
 
     fn state(monitors: usize) -> State {
+        state_with(monitors, true)
+    }
+
+    fn state_with(monitors: usize, independent: bool) -> State {
         let settings = LayoutSettings {
             gaps_in: 0,
             gaps_out: 0,
+            independent_workspaces: independent,
             ..LayoutSettings::default()
         };
         let mut s = State::new(settings, LayoutKind::Dwindle);
@@ -1147,10 +1217,43 @@ mod tests {
     }
 
     #[test]
-    fn monitors_get_distinct_workspaces() {
+    fn monitors_have_workspaces_of_their_own() {
         let s = state(2);
         let ws: Vec<_> = s.snapshot_monitors().iter().map(|m| m.workspace).collect();
-        assert_eq!(ws, vec![1, 2]);
+        assert_eq!(ws, vec![1, 1]);
+        assert_eq!(s.snapshot_workspaces().len(), 2);
+    }
+
+    #[test]
+    fn switching_workspace_stays_on_the_monitor() {
+        let mut s = state(2);
+        open(&mut s, W);
+        let effects = s.apply(&Command::Workspace(2));
+        assert!(effects.contains(&Effect::Hide(W)));
+        let monitors = s.snapshot_monitors();
+        assert!(monitors[0].focused);
+        assert_eq!((monitors[0].workspace, monitors[1].workspace), (2, 1));
+    }
+
+    #[test]
+    fn an_empty_workspace_keeps_focus_on_its_monitor() {
+        let mut s = state(2);
+        open(&mut s, W);
+        s.apply(&Command::MoveFocus(Direction::Right));
+        open(&mut s, X);
+        s.apply(&Command::MoveFocus(Direction::Left));
+        let effects = s.apply(&Command::Workspace(2));
+        assert!(effects.contains(&Effect::Defocus));
+        assert!(s.snapshot_monitors()[0].focused);
+        assert_eq!(s.focused(), None);
+    }
+
+    #[test]
+    fn synced_monitors_switch_together() {
+        let mut s = state_with(2, false);
+        s.apply(&Command::Workspace(3));
+        let ws: Vec<_> = s.snapshot_monitors().iter().map(|m| m.workspace).collect();
+        assert_eq!(ws, vec![3, 3]);
     }
 
     #[test]
@@ -1192,7 +1295,7 @@ mod tests {
         let mut s = state(2);
         open(&mut s, W);
         let effects = s.apply(&Command::MoveFocus(Direction::Right));
-        assert_eq!(s.focused_workspace(), Some(2));
+        assert!(s.snapshot_monitors()[1].focused);
         assert!(!effects.iter().any(|e| matches!(e, Effect::Focus(_))));
         s.apply(&Command::MoveFocus(Direction::Left));
         assert_eq!(s.focused(), Some(W));
@@ -1239,7 +1342,7 @@ mod tests {
         open(&mut s, W);
         let effects = s.apply(&Command::MoveWindow(Direction::Right));
         assert_eq!(placed(&effects, W), Some(Rect::new(1000, 0, 1000, 960)));
-        assert_eq!(s.focused_workspace(), Some(2));
+        assert!(s.snapshot_monitors()[1].focused);
     }
 
     #[test]
@@ -1322,9 +1425,8 @@ mod tests {
         let mut s = state(2);
         s.apply(&Command::FocusMonitor(Direction::Right));
         open(&mut s, W);
-        s.set_monitors(vec![monitor(1, 0)]);
+        let effects = s.set_monitors(vec![monitor(1, 0)]);
         assert_eq!(s.monitor_count(), 1);
-        let effects = s.apply(&Command::Workspace(2));
         assert_eq!(placed(&effects, W), Some(Rect::new(0, 0, 1000, 960)));
     }
 

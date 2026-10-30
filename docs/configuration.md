@@ -28,6 +28,7 @@ Every other table merges: a key you leave out keeps its default. Unknown keys ar
 | `remap` | `true` | Run the key remapper with the `[remap]` layers. |
 | `gaps_in` | `10` | Pixels between neighbouring tiled windows. |
 | `gaps_out` | `10` | Pixels between tiled windows and the monitor edge. |
+| `independent_workspaces` | `true` | Every monitor has workspaces of its own, so `workspace 2` is workspace 2 on the monitor you are on and never moves focus to another monitor. `false` syncs the monitors: switching workspace switches them all together. See [layouts](layouts.md#workspaces-and-monitors). |
 | `layout` | `"master"` | Layout of new workspaces: `dwindle`, `master`, `monocle`, `scrolling` or `even`. New workspaces on a portrait monitor start with `even` instead. See [layouts](layouts.md). |
 | `borders` | `true` | Colour the window border to show focus (Windows 11). |
 | `border_active` | `"#89b4fa"` | Border colour of the focused window. |
@@ -123,6 +124,7 @@ tiling = true                 # manage windows; false leaves them alone
 remap = true                  # remap keys with the [remap] layers
 gaps_in = 10                  # px between neighbouring windows
 gaps_out = 10                 # px between windows and the monitor edge
+independent_workspaces = true # each monitor has its own workspaces; false syncs them
 layout = "master"             # dwindle | master | monocle | scrolling | even
 borders = true                # colour the window border to show focus (Windows 11)
 border_active = "#89b4fa"

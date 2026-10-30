@@ -20,10 +20,27 @@ Rotating a monitor switches its workspace to `even` (portrait) or back to the de
 (landscape). Only workspaces that were on `even` or are now on a portrait monitor change; a
 workspace you set to another layout stays on it until the monitor is rotated.
 
+## Workspaces and monitors
+
+By default every monitor has workspaces of its own (`general.independent_workspaces = true`).
+`workspace 2` shows workspace 2 *of the monitor you are on*, so it never jumps to another monitor,
+and each monitor has its own workspace 2 with its own windows and layout. `movetoworkspace 2`
+likewise sends the window to workspace 2 of its monitor. Moving a window to another monitor puts
+it on the workspace that monitor is showing.
+
+Set `independent_workspaces = false` to sync the monitors instead: switching to workspace 2
+switches every monitor to its own workspace 2 at once.
+
+Switching to an empty workspace keeps focus on that monitor: with no window to focus, Tile
+focuses the desktop, so Windows doesn't hand focus to a window on another monitor and flick you
+over to it.
+
+If a monitor is unplugged, its workspaces are merged into the first monitor's workspaces with the
+same numbers, so no window is lost.
+
 ## Several monitors
 
-Each monitor shows one workspace, and a workspace belongs to a monitor. Windows already open when
-Tile starts are tiled on the monitor they are on, taken left to right then top to bottom so they
+Windows already open when Tile starts are tiled on the monitor they are on, taken left to right then top to bottom so they
 land in tiles near where they were, and new windows open on the monitor under the
 mouse. `movefocus` and `movewindow` carry on to the next monitor at the edge of the current one,
 landing on the window nearest the one you left.

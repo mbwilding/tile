@@ -4,6 +4,7 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
+    time::{Duration, Instant},
 };
 
 use tile_hook::{Decision, Input, MouseEvent, MouseHandler, MouseHook};
@@ -15,18 +16,13 @@ use crate::{
     windows::is_shell_window,
 };
 
-/// A Win+left-button drag, as the mouse hook sees it.
+/// Reported when a Win+left-button drag begins and ends. The window is moved by the hook
+/// itself, so the daemon only needs to know when to keep its hands off and where it was dropped.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DragEvent {
     /// Pressed over the top-level window `window`.
     Start {
         window: isize,
-        x: i32,
-        y: i32,
-    },
-    Move {
-        x: i32,
-        y: i32,
     },
     End {
         x: i32,
@@ -34,63 +30,116 @@ pub enum DragEvent {
     },
 }
 
-/// Turns Win + left-drag into [`DragEvent`]s via a `WH_MOUSE_LL` hook. The press and release
-/// are swallowed, so the window under the pointer never sees the click.
+/// Win + left-drag moves the window under the pointer, via a `WH_MOUSE_LL` hook.
+///
+/// The press and release are swallowed, so the window never sees the click. The hook thread
+/// moves the window on every mouse move, with no hop through the daemon's busy event loop, which
+/// is what keeps it close to the pointer.
 pub struct WinDrag {
     enabled: Arc<AtomicBool>,
     _hook: MouseHook,
 }
 
+/// The window being dragged, and where in it the pointer holds it.
+struct Grab {
+    hwnd: w::HWND,
+    offset: (i32, i32),
+    last: Instant,
+}
+
 struct Dragger {
     enabled: Arc<AtomicBool>,
     tx: mpsc::UnboundedSender<DragEvent>,
-    active: bool,
+    grab: Option<Grab>,
 }
+
+/// Mouse moves arrive far faster than a screen refreshes; moving the window for each only fills
+/// its message queue.
+const MOVE_INTERVAL: Duration = Duration::from_millis(4);
 
 fn win_held() -> bool {
     w::GetAsyncKeyState(co::VK::LWIN) || w::GetAsyncKeyState(co::VK::RWIN)
 }
 
-fn window_at(x: i32, y: i32) -> Option<isize> {
+fn window_at(x: i32, y: i32) -> Option<w::HWND> {
     let hwnd = w::HWND::WindowFromPoint(w::POINT::with(x, y))?;
-    let root = hwnd.GetAncestor(co::GA::ROOT).unwrap_or(hwnd);
-    Some(root.ptr() as isize)
+    Some(hwnd.GetAncestor(co::GA::ROOT).unwrap_or(hwnd))
+}
+
+fn move_to(hwnd: &w::HWND, x: i32, y: i32) {
+    let flags = co::SWP::NOSIZE
+        | co::SWP::NOZORDER
+        | co::SWP::NOACTIVATE
+        | co::SWP::NOOWNERZORDER
+        | co::SWP::ASYNCWINDOWPOS;
+    let _ = hwnd.SetWindowPos(
+        w::HwndPlace::None,
+        w::POINT::with(x, y),
+        w::SIZE::default(),
+        flags,
+    );
+}
+
+impl Dragger {
+    fn begin(&mut self, x: i32, y: i32) -> Decision {
+        let Some(hwnd) = window_at(x, y) else {
+            return Decision::Pass;
+        };
+        let raw = hwnd.ptr() as isize;
+        if hwnd.IsZoomed() || is_shell_window(raw) {
+            return Decision::Pass;
+        }
+        let Ok(outer) = hwnd.GetWindowRect() else {
+            return Decision::Pass;
+        };
+        self.grab = Some(Grab {
+            hwnd,
+            offset: (x - outer.left, y - outer.top),
+            last: Instant::now(),
+        });
+        WIN_USED.store(true, Ordering::Relaxed);
+        // Stops Win's release opening the Start menu.
+        tile_hook::send(&[
+            Input::Vk {
+                vk: SILENT_VK,
+                up: false,
+            },
+            Input::Vk {
+                vk: SILENT_VK,
+                up: true,
+            },
+        ]);
+        let _ = self.tx.send(DragEvent::Start { window: raw });
+        Decision::Block
+    }
 }
 
 impl MouseHandler for Dragger {
     fn mouse(&mut self, event: MouseEvent, x: i32, y: i32) -> Decision {
         match event {
             MouseEvent::LeftDown
-                if !self.active && self.enabled.load(Ordering::Relaxed) && win_held() =>
+                if self.grab.is_none() && self.enabled.load(Ordering::Relaxed) && win_held() =>
             {
-                let Some(window) = window_at(x, y).filter(|w| !is_shell_window(*w)) else {
-                    return Decision::Pass;
-                };
-                self.active = true;
-                WIN_USED.store(true, Ordering::Relaxed);
-                // Stops Win's release opening the Start menu.
-                tile_hook::send(&[
-                    Input::Vk {
-                        vk: SILENT_VK,
-                        up: false,
-                    },
-                    Input::Vk {
-                        vk: SILENT_VK,
-                        up: true,
-                    },
-                ]);
-                let _ = self.tx.send(DragEvent::Start { window, x, y });
-                Decision::Block
+                self.begin(x, y)
             }
-            MouseEvent::Move if self.active => {
-                let _ = self.tx.send(DragEvent::Move { x, y });
+            MouseEvent::Move => {
+                if let Some(grab) = &mut self.grab
+                    && grab.last.elapsed() >= MOVE_INTERVAL
+                {
+                    grab.last = Instant::now();
+                    move_to(&grab.hwnd, x - grab.offset.0, y - grab.offset.1);
+                }
                 Decision::Pass
             }
-            MouseEvent::LeftUp if self.active => {
-                self.active = false;
-                let _ = self.tx.send(DragEvent::End { x, y });
-                Decision::Block
-            }
+            MouseEvent::LeftUp => match self.grab.take() {
+                Some(grab) => {
+                    // The last position, which a throttled move may have skipped.
+                    move_to(&grab.hwnd, x - grab.offset.0, y - grab.offset.1);
+                    let _ = self.tx.send(DragEvent::End { x, y });
+                    Decision::Block
+                }
+                None => Decision::Pass,
+            },
             _ => Decision::Pass,
         }
     }
@@ -99,12 +148,12 @@ impl MouseHandler for Dragger {
 impl WinDrag {
     pub fn start(tx: mpsc::UnboundedSender<DragEvent>) -> io::Result<Self> {
         let enabled = Arc::new(AtomicBool::new(false));
-        let dragger = Dragger {
-            enabled: enabled.clone(),
+        let shared = enabled.clone();
+        let hook = tile_hook::spawn_mouse("mouse hook", move || Dragger {
+            enabled: shared,
             tx,
-            active: false,
-        };
-        let hook = tile_hook::spawn_mouse("mouse hook", move || dragger)?;
+            grab: None,
+        })?;
         Ok(Self {
             enabled,
             _hook: hook,

@@ -39,7 +39,9 @@ binds, so they see keys as remapped: a home-row `Win` works for `Win+` binds.
 | `Win` + left-drag | move the window with the mouse; drop it on a tile to swap, or on another monitor to move it there |
 
 Mouse: dragging a tile onto another swaps them, and dragging a tile's edge resizes the split.
-Releasing `Win` after a `Win` drag doesn't open the Start menu.
+Releasing `Win` after a `Win` drag doesn't open the Start menu. A held key keeps the modifiers
+it was pressed with, so letting go of `Ctrl` before the letter doesn't turn its auto-repeat into
+a different bind.
 
 ## Writing a key
 
@@ -66,7 +68,7 @@ A `[binds]` value is `<dispatcher> [arguments]`. `tilectl dispatch` runs the sam
 | `movewindow <l\|r\|u\|d>` | move the window that way, to the next monitor at the edge |
 | `resizeactive <dx> <dy>` | grow (or shrink, with negative values) by pixels |
 | `cyclenext` / `cycleprev` | focus the next / previous window in layout order |
-| `workspace <n>` | switch to workspace `n` (1-255) |
+| `workspace <n>` | switch to workspace `n` (1-255) on the focused monitor, or on every monitor when `independent_workspaces` is off |
 | `movetoworkspace <n>` | move the window to workspace `n` and follow it |
 | `movetoworkspacesilent <n>` | move the window to workspace `n` and stay |
 | `focusmonitor <l\|r\|u\|d>` | focus the next monitor that way |

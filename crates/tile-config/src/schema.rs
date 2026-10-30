@@ -219,6 +219,7 @@ impl Config {
             scrolling_proportion: self.scrolling.proportion.clamp(0.1, 1.0),
             scrolling_presets: self.scrolling.proportion_presets.clone(),
             scrolling_center: self.scrolling.center_focused,
+            independent_workspaces: self.general.independent_workspaces,
         }
     }
 }
@@ -234,6 +235,9 @@ pub struct General {
     pub gaps_in: i32,
     /// Space between tiled windows and the monitor edge.
     pub gaps_out: i32,
+    /// Each monitor has workspaces of its own, so `workspace 2` means workspace 2 on the
+    /// monitor you are on. Off, the monitors are synced: switching workspace switches them all.
+    pub independent_workspaces: bool,
     pub layout: LayoutKind,
     pub borders: bool,
     pub border_active: Color,
@@ -256,6 +260,7 @@ impl Default for General {
             remap: true,
             gaps_in: 10,
             gaps_out: 10,
+            independent_workspaces: true,
             layout: LayoutKind::Master,
             borders: true,
             border_active: Color::rgb(0x89, 0xb4, 0xfa),
