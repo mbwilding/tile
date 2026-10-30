@@ -137,6 +137,52 @@ fn focus_attached(hwnd: &w::HWND) -> bool {
     focused
 }
 
+fn focus_hwnd(hwnd: &w::HWND) -> bool {
+    if hwnd.IsIconic() {
+        let _ = hwnd.ShowWindowAsync(co::SW::RESTORE);
+    }
+    let mut focused = hwnd.SetForegroundWindow();
+    if !focused {
+        // Windows only lets the process that received the last input steal focus.
+        // A zero-distance mouse move makes that us, without any visible side effect.
+        let nudge = w::MOUSEINPUT {
+            dwFlags: co::MOUSEEVENTF::MOVE,
+            ..Default::default()
+        };
+        let _ = w::SendInput(&[w::HwKbMouse::Mouse(nudge)]);
+        focused = hwnd.SetForegroundWindow() || focus_attached(hwnd);
+    }
+    let _ = hwnd.BringWindowToTop();
+    focused
+}
+
+/// Brings a window of the process `exe` (a file name like `chrome.exe`) on the current virtual
+/// desktop to the foreground, even a minimized one. `false` if there is none.
+pub fn focus_exe(exe: &str) -> bool {
+    let own_pid = w::GetCurrentProcessId();
+    let candidates = enumerate(|h| {
+        let ex_style = h.GetWindowLongPtr(co::GWLP::EXSTYLE);
+        h.IsWindowVisible()
+            && !is_cloaked(h)
+            && !has(ex_style, co::WS_EX::TOOLWINDOW.raw())
+            && h.GetWindow(co::GW::OWNER).is_err()
+            && h.GetWindowThreadProcessId().1 != own_pid
+            && h.GetWindowText().is_ok_and(|t| !t.is_empty())
+            && info_of(h).exe.eq_ignore_ascii_case(exe)
+    });
+    candidates.first().is_some_and(focus_hwnd)
+}
+
+/// Closes the foreground window like Alt+F4, unless it belongs to the shell.
+pub fn close_foreground() {
+    if let Some(raw) = foreground()
+        && !is_shell_window(raw)
+        && !tile_hook::post_close(raw)
+    {
+        tracing::debug!("couldn't ask {raw:#x} to close");
+    }
+}
+
 /// Enumerates top-level windows, keeping the handles `keep` selects.
 pub(crate) fn enumerate(mut keep: impl FnMut(&w::HWND) -> bool) -> Vec<w::HWND> {
     let mut out = Vec::new();
@@ -327,6 +373,34 @@ impl Windows {
         })
     }
 
+    /// The window's outer rectangle, including its invisible resize borders.
+    pub fn outer_rect(&self, id: WindowId) -> Option<Rect> {
+        self.handles
+            .get(&id)
+            .and_then(|h| h.GetWindowRect().ok())
+            .map(rect)
+    }
+
+    /// Moves the window's outer rectangle so its top-left is at `(x, y)`, keeping its size. Much
+    /// cheaper than [`place`](Self::place), for following the mouse.
+    pub fn move_to(&self, id: WindowId, x: i32, y: i32) -> bool {
+        let Some(hwnd) = self.handles.get(&id) else {
+            return false;
+        };
+        let flags = co::SWP::NOSIZE
+            | co::SWP::NOZORDER
+            | co::SWP::NOACTIVATE
+            | co::SWP::NOOWNERZORDER
+            | co::SWP::ASYNCWINDOWPOS;
+        hwnd.SetWindowPos(
+            w::HwndPlace::None,
+            w::POINT::with(x, y),
+            w::SIZE::default(),
+            flags,
+        )
+        .is_ok()
+    }
+
     pub fn show(&self, id: WindowId) {
         if let Some(hwnd) = self.handles.get(&id) {
             let _ = hwnd.ShowWindowAsync(co::SW::SHOWNA);
@@ -341,25 +415,7 @@ impl Windows {
 
     /// Brings a window to the foreground. Returns `false` if Windows refused.
     pub fn focus(&self, id: WindowId) -> bool {
-        let Some(hwnd) = self.handles.get(&id) else {
-            return false;
-        };
-        if hwnd.IsIconic() {
-            let _ = hwnd.ShowWindowAsync(co::SW::RESTORE);
-        }
-        let mut focused = hwnd.SetForegroundWindow();
-        if !focused {
-            // Windows only lets the process that received the last input steal focus.
-            // A zero-distance mouse move makes that us, without any visible side effect.
-            let nudge = w::MOUSEINPUT {
-                dwFlags: co::MOUSEEVENTF::MOVE,
-                ..Default::default()
-            };
-            let _ = w::SendInput(&[w::HwKbMouse::Mouse(nudge)]);
-            focused = hwnd.SetForegroundWindow() || focus_attached(hwnd);
-        }
-        let _ = hwnd.BringWindowToTop();
-        focused
+        self.handles.get(&id).is_some_and(focus_hwnd)
     }
 
     /// Asks the window to close, like clicking its close button.

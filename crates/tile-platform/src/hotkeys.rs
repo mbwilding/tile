@@ -14,7 +14,13 @@ use win_hotkeys::VKey;
 use winsafe::{self as w, co};
 
 /// An unassigned virtual key: tapping it while Win is down stops Win's release opening Start.
-const SILENT_VK: u16 = 0xE8;
+pub(crate) const SILENT_VK: u16 = 0xE8;
+
+/// Set while Win is held and has been used for a mouse drag, so releasing it must not open Start.
+pub(crate) static WIN_USED: AtomicBool = AtomicBool::new(false);
+
+const LWIN: u16 = 0x5B;
+const RWIN: u16 = 0x5C;
 
 /// Shift, Ctrl, Alt and Win (generic, left and right): pressing one alone isn't typing.
 const MODIFIER_VKS: [u16; 11] = [
@@ -29,6 +35,8 @@ pub enum HotkeyEvent {
     /// A key that is neither a bind nor a lone modifier went down, while typing is reported
     /// ([`Hotkeys::set_report_typing`]).
     Typed,
+    /// The `[hotkeys]` entry with this index was pressed (and swallowed).
+    Hotkey(usize),
 }
 
 #[derive(Debug, Clone)]
@@ -51,6 +59,9 @@ struct Binding {
 #[derive(Clone)]
 pub struct Hotkeys {
     table: Arc<RwLock<Vec<Binding>>>,
+    /// The `[hotkeys]` table, switched on and off apart from the binds.
+    extra: Arc<RwLock<Vec<Binding>>>,
+    extra_paused: Arc<AtomicBool>,
     paused: Arc<AtomicBool>,
     report_typing: Arc<AtomicBool>,
 }
@@ -73,6 +84,31 @@ fn held() -> Modifiers {
 
 impl Handler for Matcher {
     fn key(&mut self, key: RawKey) -> Decision {
+        if !key.down && matches!(key.vk, LWIN | RWIN) && WIN_USED.swap(false, Ordering::Relaxed) {
+            // Windows opens Start when Win goes up with no other key since it went down. Hold
+            // the real release back, press a key that does nothing, then send the release, so
+            // the order is guaranteed.
+            let sent = tile_hook::send(&[
+                Input::Vk {
+                    vk: SILENT_VK,
+                    up: false,
+                },
+                Input::Vk {
+                    vk: SILENT_VK,
+                    up: true,
+                },
+                Input::Vk {
+                    vk: key.vk,
+                    up: true,
+                },
+            ]);
+            // If nothing was sent, let the real release through rather than stick Win down.
+            return if sent == 3 {
+                Decision::Block
+            } else {
+                Decision::Pass
+            };
+        }
         if !key.down || key.vk == SILENT_VK {
             return Decision::Pass;
         }
@@ -83,7 +119,21 @@ impl Handler for Matcher {
                 .find(|b| b.vk == key.vk && b.modifiers == mods && (b.always || !paused))
                 .map(|b| b.index)
         });
-        let Some(index) = matched else {
+        let extra = || {
+            if self.hotkeys.extra_paused.load(Ordering::Relaxed) {
+                return None;
+            }
+            self.hotkeys.extra.read().ok().and_then(|t| {
+                t.iter()
+                    .find(|b| b.vk == key.vk && b.modifiers == mods)
+                    .map(|b| b.index)
+            })
+        };
+        let event = match matched {
+            Some(index) => Some(HotkeyEvent::Bind(index)),
+            None => extra().map(HotkeyEvent::Hotkey),
+        };
+        let Some(event) = event else {
             if self.hotkeys.report_typing.load(Ordering::Relaxed) && !MODIFIER_VKS.contains(&key.vk)
             {
                 let _ = self.tx.send(HotkeyEvent::Typed);
@@ -102,7 +152,7 @@ impl Handler for Matcher {
                 },
             ]);
         }
-        let _ = self.tx.send(HotkeyEvent::Bind(index));
+        let _ = self.tx.send(event);
         Decision::Block
     }
 
@@ -122,6 +172,8 @@ impl Hotkeys {
     pub fn start(tx: mpsc::UnboundedSender<HotkeyEvent>) -> io::Result<Self> {
         let hotkeys = Self {
             table: Arc::new(RwLock::new(Vec::new())),
+            extra: Arc::new(RwLock::new(Vec::new())),
+            extra_paused: Arc::new(AtomicBool::new(false)),
             paused: Arc::new(AtomicBool::new(false)),
             report_typing: Arc::new(AtomicBool::new(false)),
         };
@@ -159,6 +211,35 @@ impl Hotkeys {
             *t = table;
         }
         errors
+    }
+
+    /// Replaces the `[hotkeys]` table. Returns a message for every key that isn't recognised.
+    pub fn set_hotkeys(&self, keys: &[Keybind]) -> Vec<String> {
+        let mut errors = Vec::new();
+        let table = keys
+            .iter()
+            .enumerate()
+            .filter_map(|(index, bind)| match VKey::from_keyname(&bind.key) {
+                Ok(key) => Some(Binding {
+                    vk: key.to_vk_code(),
+                    modifiers: bind.modifiers,
+                    index,
+                    always: false,
+                }),
+                Err(e) => {
+                    errors.push(format!("hotkey `{bind}`: {e}"));
+                    None
+                }
+            })
+            .collect();
+        if let Ok(mut t) = self.extra.write() {
+            *t = table;
+        }
+        errors
+    }
+
+    pub fn set_hotkeys_paused(&self, paused: bool) {
+        self.extra_paused.store(paused, Ordering::Relaxed);
     }
 
     pub fn set_paused(&self, paused: bool) {

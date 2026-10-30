@@ -9,6 +9,9 @@ use tile_core::{LayoutKind, LayoutSettings, animation::Bezier, layout::CenterMod
 pub struct Config {
     pub general: General,
     pub cursor: Cursor,
+    pub tray: Tray,
+    /// Hotkeys for launching or focusing apps and closing windows; see [`Hotkey`].
+    pub hotkeys: BTreeMap<String, Hotkey>,
     pub animations: Animations,
     pub dwindle: Dwindle,
     pub master: Master,
@@ -19,11 +22,82 @@ pub struct Config {
     pub rules: Vec<Rule>,
 }
 
+/// What a `[hotkeys]` entry does. They work independently of tiling, and are switched on and
+/// off together by the tray's Hotkey item.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Hotkey {
+    /// `"super+b" = "chrome.exe"`: focus a window of that program, or start it.
+    Run(String),
+    /// `{ run = "chrome.exe", exe = "chrome.exe" }`: start `run`, but focus a window of the
+    /// process `exe` instead if there is one. `{ run = "wt.exe", focus = false }` always starts
+    /// a new one.
+    App {
+        run: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        exe: Option<String>,
+        /// Focus an existing window of the program rather than starting another. Default on.
+        #[serde(default = "yes", skip_serializing_if = "is_true")]
+        focus: bool,
+    },
+    /// `{ close = true }`: close the focused window, like Alt+F4.
+    Close { close: bool },
+}
+
+impl Hotkey {
+    /// The process whose window to focus rather than starting `run` again.
+    pub fn exe(&self) -> Option<String> {
+        match self {
+            Self::Run(run) => {
+                let run = run.trim();
+                let program = match run.strip_prefix('"') {
+                    Some(quoted) => quoted.split('"').next().unwrap_or(quoted),
+                    None => run.split_whitespace().next().unwrap_or(run),
+                };
+                std::path::Path::new(program)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+            }
+            Self::App { focus: false, .. } => None,
+            Self::App { exe, run, .. } => exe.clone().or_else(|| Self::Run(run.clone()).exe()),
+            Self::Close { .. } => None,
+        }
+    }
+}
+
+fn yes() -> bool {
+    true
+}
+
+fn is_true(value: &bool) -> bool {
+    *value
+}
+
+fn default_hotkeys() -> BTreeMap<String, Hotkey> {
+    BTreeMap::from([
+        (
+            "super+b".to_string(),
+            Hotkey::App {
+                run: "chrome.exe".into(),
+                exe: Some("chrome.exe".into()),
+                focus: true,
+            },
+        ),
+        (
+            "super+t".to_string(),
+            Hotkey::App {
+                run: "wt.exe".into(),
+                exe: None,
+                focus: false,
+            },
+        ),
+        ("super+q".to_string(), Hotkey::Close { close: true }),
+    ])
+}
+
 /// Keybinds used when the config has no `[binds]` table.
 const DEFAULT_BINDS: &[(&str, &str)] = &[
-    ("super+t", "exec wt.exe"),
     ("super+enter", "swapwithmaster"),
-    ("super+q", "killactive"),
     ("super+f", "togglefloating"),
     ("super+o", "fullscreen"),
     ("super+space", "cyclelayout"),
@@ -110,6 +184,8 @@ impl Default for Config {
         Self {
             general: General::default(),
             cursor: Cursor::default(),
+            tray: Tray::default(),
+            hotkeys: default_hotkeys(),
             animations: Animations::default(),
             dwindle: Dwindle::default(),
             master: Master::default(),
@@ -170,7 +246,7 @@ impl Default for General {
             remap: true,
             gaps_in: 10,
             gaps_out: 10,
-            layout: LayoutKind::Dwindle,
+            layout: LayoutKind::Master,
             borders: true,
             border_active: Color::rgb(0x89, 0xb4, 0xfa),
             border_inactive: Color::rgb(0x45, 0x47, 0x5a),
@@ -182,15 +258,44 @@ impl Default for General {
     }
 }
 
+/// The tray's switches, saved here whenever they are changed so they survive a restart.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Tray {
+    /// Window management is on. Off until switched on.
+    pub tile: bool,
+    /// Key remapping is on. Off until switched on.
+    pub key: bool,
+    /// The `[hotkeys]` are on.
+    pub hotkey: bool,
+    /// Logging to the log file is on.
+    pub logging: bool,
+}
+
+impl Default for Tray {
+    fn default() -> Self {
+        Self {
+            tile: false,
+            key: false,
+            hotkey: true,
+            logging: false,
+        }
+    }
+}
+
 /// The mouse pointer.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Cursor {
-    /// Move the pointer to the middle of a monitor when a keybind or dispatch focuses it.
+    /// Move the pointer onto the focused window (the middle of the monitor, if it is empty)
+    /// whenever a keybind or dispatch moves focus, then hide it like typing does, until the
+    /// mouse moves. It stays put if it is already over the window.
     pub warp: bool,
     /// Hide the pointer when a key is typed, until the mouse moves or clicks, or another
     /// monitor is focused. Modifiers on their own and keybinds don't count as typing.
     pub hide_on_key: bool,
+    /// Hold Win and drag a window with the left button, from anywhere on it.
+    pub drag: bool,
 }
 
 impl Default for Cursor {
@@ -198,6 +303,7 @@ impl Default for Cursor {
         Self {
             warp: true,
             hide_on_key: true,
+            drag: true,
         }
     }
 }
