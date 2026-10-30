@@ -25,6 +25,7 @@ use crate::{
     launch, logging,
     paths::{self, Restore},
     remap::{self, Notice, Remap},
+    settings,
 };
 
 /// How long an event we caused ourselves (hide/show) may take to arrive.
@@ -222,6 +223,7 @@ pub async fn run(config_path: PathBuf, loaded: Loaded) -> anyhow::Result<()> {
     let settings = loaded.config.layout_settings();
     let layout = loaded.config.general.layout;
     let current = vd::current_desktop().unwrap_or_default();
+    let saved = settings::load();
     let mut daemon = Daemon {
         desktops: Desktops::new(current, settings, layout),
         windows: Windows::new(),
@@ -230,8 +232,8 @@ pub async fn run(config_path: PathBuf, loaded: Loaded) -> anyhow::Result<()> {
         commands: Vec::new(),
         hotkeys,
         tray,
-        paused: false,
-        remap_paused: false,
+        paused: !saved.tile,
+        remap_paused: !saved.key,
         quit: false,
         tiling: false,
         remap: None,
@@ -258,6 +260,9 @@ pub async fn run(config_path: PathBuf, loaded: Loaded) -> anyhow::Result<()> {
         cursor_hidden: None,
         cursor_check_at: None,
     };
+    daemon.hotkeys.set_paused(daemon.paused);
+    daemon.tray.set_tile_paused(daemon.paused);
+    daemon.tray.set_key_paused(daemon.remap_paused);
     if daemon.loaded.config.general.tiling {
         daemon.start_tiling();
     }
@@ -579,6 +584,7 @@ impl Daemon {
     fn set_remap_paused(&mut self, paused: bool) {
         self.remap_paused = paused;
         self.tray.set_key_paused(paused);
+        settings::update(|s| s.key = !paused);
         if let Some(remap) = &self.remap {
             remap.send(remap::Command::Pause(paused));
         }
@@ -590,6 +596,7 @@ impl Daemon {
         self.paused = paused;
         self.hotkeys.set_paused(paused);
         self.tray.set_tile_paused(paused);
+        settings::update(|s| s.tile = !paused);
         self.update_cursor();
         tracing::info!("tiling {}", if paused { "paused" } else { "resumed" });
         if !paused && self.tiling {
