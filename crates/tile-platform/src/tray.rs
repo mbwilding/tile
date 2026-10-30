@@ -22,6 +22,8 @@ pub enum TrayEvent {
     ToggleTile,
     /// Pause or resume the key remapper.
     ToggleKey,
+    /// Pause or resume the `[hotkeys]`.
+    ToggleHotkey,
     ToggleLogging,
     Reload,
     OpenConfig,
@@ -47,6 +49,7 @@ pub struct Tray {
 struct Checks {
     tile_paused: AtomicBool,
     key_paused: AtomicBool,
+    hotkey_paused: AtomicBool,
     logging: AtomicBool,
 }
 
@@ -76,6 +79,8 @@ struct Items {
     tile: CheckMenuItem,
     /// Checked while the key remapper runs (not paused).
     key: CheckMenuItem,
+    /// Checked while the `[hotkeys]` run (not paused).
+    hotkey: CheckMenuItem,
     logging: CheckMenuItem,
     reload: MenuId,
     open_config: MenuId,
@@ -92,6 +97,7 @@ impl Items {
         };
         set(&self.tile, !checks.tile_paused.load(Ordering::Relaxed));
         set(&self.key, !checks.key_paused.load(Ordering::Relaxed));
+        set(&self.hotkey, !checks.hotkey_paused.load(Ordering::Relaxed));
         set(&self.logging, checks.logging.load(Ordering::Relaxed));
     }
 }
@@ -99,6 +105,7 @@ impl Items {
 fn build(checks: &Checks) -> Result<(TrayIcon, Items), String> {
     let tile = CheckMenuItem::new("Tile", true, true, None);
     let key = CheckMenuItem::new("Key", true, true, None);
+    let hotkey = CheckMenuItem::new("Hotkey", true, true, None);
     let logging = CheckMenuItem::new("Logging", true, false, None);
     let reload = MenuItem::new("Reload config", true, None);
     let open_config = MenuItem::new("Open config", true, None);
@@ -108,6 +115,7 @@ fn build(checks: &Checks) -> Result<(TrayIcon, Items), String> {
     menu.append_items(&[
         &tile,
         &key,
+        &hotkey,
         &PredefinedMenuItem::separator(),
         &reload,
         &open_config,
@@ -132,6 +140,7 @@ fn build(checks: &Checks) -> Result<(TrayIcon, Items), String> {
         quit: quit.id().clone(),
         tile,
         key,
+        hotkey,
         logging,
     };
     items.sync(checks);
@@ -162,6 +171,11 @@ impl Tray {
     /// Reflects the key remapper's pause state in the menu.
     pub fn set_key_paused(&self, paused: bool) {
         self.checks.key_paused.store(paused, Ordering::Relaxed);
+    }
+
+    /// Reflects the hotkeys' pause state in the menu.
+    pub fn set_hotkey_paused(&self, paused: bool) {
+        self.checks.hotkey_paused.store(paused, Ordering::Relaxed);
     }
 
     pub fn set_logging(&self, logging: bool) {
@@ -226,6 +240,8 @@ fn run(tx: &mpsc::UnboundedSender<TrayEvent>, shutdown: &Arc<AtomicBool>, checks
                     Some(TrayEvent::ToggleTile)
                 } else if event.id == *items.key.id() {
                     Some(TrayEvent::ToggleKey)
+                } else if event.id == *items.hotkey.id() {
+                    Some(TrayEvent::ToggleHotkey)
                 } else if event.id == *items.logging.id() {
                     Some(TrayEvent::ToggleLogging)
                 } else if event.id == items.reload {

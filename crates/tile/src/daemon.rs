@@ -6,14 +6,14 @@ use std::{
 };
 
 use anyhow::{Context, bail};
-use tile_config::Loaded;
+use tile_config::{Hotkey, Loaded};
 use tile_core::{Command, Effect, LayoutKind, ManageOptions, MonitorInfo, Rect, WindowId};
 use tile_ipc::{Event, Incoming, Query, Request, Response, Server};
 use tile_platform::{
-    Animation, Discovered, HotkeyEvent, Hotkeys, Mover, PlaceError, Tray, TrayEvent, WinEvent,
-    WinEventHooks, Windows, cursor_pos,
+    Animation, Discovered, DragEvent, HotkeyEvent, Hotkeys, Mover, PlaceError, Tray, TrayEvent,
+    WinDrag, WinEvent, WinEventHooks, Windows, close_foreground, cursor_pos,
     desktops::{self as vd, DesktopChange, DesktopId},
-    foreground, is_shell_window, monitors, mouse_button_down, set_cursor_pos,
+    focus_exe, foreground, is_shell_window, monitors, mouse_button_down, set_cursor_pos,
 };
 use tokio::{
     sync::mpsc::{self, UnboundedReceiver, UnboundedSender},
@@ -53,10 +53,17 @@ struct Receivers {
     events: UnboundedReceiver<WinEvent>,
     desktops: UnboundedReceiver<DesktopChange>,
     hotkeys: UnboundedReceiver<HotkeyEvent>,
+    drags: UnboundedReceiver<DragEvent>,
     tray: UnboundedReceiver<TrayEvent>,
     ipc: UnboundedReceiver<Incoming>,
     config: UnboundedReceiver<()>,
     remap: UnboundedReceiver<Notice>,
+}
+
+/// A window being moved by Win + drag, and where inside its outer frame the pointer grabbed it.
+struct Drag {
+    id: WindowId,
+    grab: (i32, i32),
 }
 
 struct Daemon {
@@ -66,11 +73,16 @@ struct Daemon {
     config_path: PathBuf,
     commands: Vec<Command>,
     hotkeys: Hotkeys,
+    win_drag: WinDrag,
+    /// The window being dragged with Win + left button.
+    drag: Option<Drag>,
     tray: Tray,
     /// The window manager is paused (tray "Tile").
     paused: bool,
     /// The key remapper is paused (tray "Key").
     remap_paused: bool,
+    /// The `[hotkeys]` are paused (tray "Hotkey").
+    hotkey_paused: bool,
     quit: bool,
     /// The window manager is on (`general.tiling`).
     tiling: bool,
@@ -205,6 +217,7 @@ pub async fn run(config_path: PathBuf, loaded: Loaded) -> anyhow::Result<()> {
     let (config_tx, config_rx) = mpsc::unbounded_channel();
     let (desktop_tx, desktop_rx) = mpsc::unbounded_channel();
     let (remap_tx, remap_rx) = mpsc::unbounded_channel();
+    let (drag_tx, drags_rx) = mpsc::unbounded_channel();
 
     let (hooks, events) = WinEventHooks::install()
         .await
@@ -212,6 +225,7 @@ pub async fn run(config_path: PathBuf, loaded: Loaded) -> anyhow::Result<()> {
     let _desktop_listener = vd::listen(desktop_tx);
     // Before the remapper: see `Hotkeys`.
     let hotkeys = Hotkeys::start(hotkey_tx).context("failed to install the keyboard hook")?;
+    let win_drag = WinDrag::start(drag_tx).context("failed to install the mouse hook")?;
     let tray = Tray::spawn(tray_tx);
     let _watcher = tile_config::watch(&config_path, move || {
         let _ = config_tx.send(());
@@ -231,9 +245,12 @@ pub async fn run(config_path: PathBuf, loaded: Loaded) -> anyhow::Result<()> {
         config_path,
         commands: Vec::new(),
         hotkeys,
+        win_drag,
+        drag: None,
         tray,
         paused: !saved.tile,
         remap_paused: !saved.key,
+        hotkey_paused: !saved.hotkey,
         quit: false,
         tiling: false,
         remap: None,
@@ -263,6 +280,9 @@ pub async fn run(config_path: PathBuf, loaded: Loaded) -> anyhow::Result<()> {
     daemon.hotkeys.set_paused(daemon.paused);
     daemon.tray.set_tile_paused(daemon.paused);
     daemon.tray.set_key_paused(daemon.remap_paused);
+    daemon.tray.set_hotkey_paused(daemon.hotkey_paused);
+    daemon.hotkeys.set_hotkeys_paused(daemon.hotkey_paused);
+    daemon.install_hotkeys();
     if daemon.loaded.config.general.tiling {
         daemon.start_tiling();
     }
@@ -276,6 +296,7 @@ pub async fn run(config_path: PathBuf, loaded: Loaded) -> anyhow::Result<()> {
             events,
             desktops: desktop_rx,
             hotkeys: hotkeys_rx,
+            drags: drags_rx,
             tray: tray_rx,
             ipc: ipc_rx,
             config: config_rx,
@@ -352,8 +373,20 @@ impl Daemon {
                             self.run_command(command);
                         }
                     }
+                    HotkeyEvent::Hotkey(index) => self.run_hotkey(index),
                     HotkeyEvent::Typed => self.hide_cursor(),
                 },
+                Some(mut event) = rx.drags.recv() => {
+                    // The mouse reports far faster than windows can move: only the newest
+                    // position matters, but a press or release must never be skipped.
+                    while matches!(event, DragEvent::Move { .. }) {
+                        match rx.drags.try_recv() {
+                            Ok(next) => event = next,
+                            Err(_) => break,
+                        }
+                    }
+                    self.on_drag(event);
+                }
                 Some(event) = rx.tray.recv() => self.on_tray(event),
                 Some(incoming) = rx.ipc.recv() => self.on_ipc(incoming),
                 Some(()) = rx.config.recv() => reload_at = Some(Instant::now() + RELOAD_DEBOUNCE),
@@ -380,9 +413,15 @@ impl Daemon {
         }
     }
 
-    /// Manages every window that is visible right now, without stealing focus.
+    /// Manages every window that is visible right now, without stealing focus. They are taken
+    /// left to right, then top to bottom, so each lands in the tile nearest where it was.
     fn discover_existing(&mut self) {
-        for found in self.windows.discover_all() {
+        let mut all = self.windows.discover_all();
+        all.sort_by_key(|f| {
+            let (x, y) = f.rect.center();
+            (x, y)
+        });
+        for found in all {
             if vd::is_pinned(found.id.0) {
                 self.windows.forget(found.id);
                 continue;
@@ -434,6 +473,7 @@ impl Daemon {
         if !self.paused {
             self.startup();
         }
+        self.update_cursor();
         tracing::info!("tiling started");
     }
 
@@ -443,6 +483,15 @@ impl Daemon {
         self.tiling = false;
         self.update_lock_override();
         self.install_binds();
+        self.reset_state();
+        self.update_cursor();
+        self.persist_restore();
+        self.publish();
+        tracing::info!("tiling stopped");
+    }
+
+    /// Forgets every window and monitor, as if no window had been managed yet.
+    fn reset_state(&mut self) {
         let config = &self.loaded.config;
         self.desktops = Desktops::new(
             vd::current_desktop().unwrap_or_default(),
@@ -460,9 +509,7 @@ impl Daemon {
         self.decoration_rules.clear();
         self.forced.clear();
         self.heal_at = None;
-        self.persist_restore();
-        self.publish();
-        tracing::info!("tiling stopped");
+        self.drag = None;
     }
 
     /// Starts, updates or stops the key remapper to match `general.remap`.
@@ -531,7 +578,15 @@ impl Daemon {
     fn reload(&mut self) {
         match Loaded::load_or_default(&self.config_path) {
             Ok(loaded) => {
+                // Our own save of a tray switch lands here too; nothing else changed.
+                let mut same = loaded.config.clone();
+                same.tray = self.loaded.config.tray.clone();
+                if same == self.loaded.config {
+                    self.loaded = loaded;
+                    return;
+                }
                 self.loaded = loaded;
+                self.install_hotkeys();
                 self.update_remap();
                 self.update_cursor();
                 match (self.tiling, self.loaded.config.general.tiling) {
@@ -599,13 +654,102 @@ impl Daemon {
         settings::update(|s| s.tile = !paused);
         self.update_cursor();
         tracing::info!("tiling {}", if paused { "paused" } else { "resumed" });
-        if !paused && self.tiling {
-            self.refresh_monitors();
-            self.sweep();
-            self.discover_existing();
-            let effects = self.desktops.current().sync();
-            self.apply(effects);
+        if !self.tiling {
+            return;
         }
+        if paused {
+            // Hand every window back as it was: shown, with its title bar and border.
+            self.release_windows();
+            self.reset_state();
+            self.persist_restore();
+            self.publish();
+        } else {
+            self.startup();
+        }
+    }
+
+    fn set_hotkey_paused(&mut self, paused: bool) {
+        self.hotkey_paused = paused;
+        self.hotkeys.set_hotkeys_paused(paused);
+        self.tray.set_hotkey_paused(paused);
+        settings::update(|s| s.hotkey = !paused);
+        tracing::info!("hotkeys {}", if paused { "paused" } else { "resumed" });
+    }
+
+    fn install_hotkeys(&mut self) {
+        let win_l = self.win_l_available();
+        let keys: Vec<_> = self
+            .loaded
+            .hotkeys
+            .iter()
+            .filter(|(bind, _)| win_l || !bind.is_win_l())
+            .map(|(bind, _)| bind.clone())
+            .collect();
+        for error in self.hotkeys.set_hotkeys(&keys) {
+            tracing::error!("{error}");
+        }
+    }
+
+    /// Runs the `[hotkeys]` entry the hook matched, by its place among the installed keys.
+    fn run_hotkey(&mut self, index: usize) {
+        let win_l = self.win_l_available();
+        let Some((_, action)) = self
+            .loaded
+            .hotkeys
+            .iter()
+            .filter(|(bind, _)| win_l || !bind.is_win_l())
+            .nth(index)
+        else {
+            return;
+        };
+        let exe = action.exe();
+        match action.clone() {
+            Hotkey::Close { close } => {
+                if close {
+                    close_foreground();
+                }
+            }
+            Hotkey::Run(run) | Hotkey::App { run, .. } => self.launch_or_focus(&run, exe),
+        }
+    }
+
+    /// Focuses a window of the process `exe` if there is one, otherwise starts `run`.
+    fn launch_or_focus(&mut self, run: &str, exe: Option<String>) {
+        if let Some(exe) = exe {
+            let current = self.desktops.current_id();
+            let focused = self.focused();
+            let mut matches: Vec<WindowId> = self
+                .desktops
+                .managed()
+                .into_iter()
+                .filter(|id| {
+                    self.desktops.owner(*id) == Some(current)
+                        && self
+                            .windows
+                            .info(*id)
+                            .is_some_and(|i| i.exe.eq_ignore_ascii_case(&exe))
+                })
+                .collect();
+            matches.sort_by_key(|id| id.0);
+            // Pressing again moves on to the next window of the program.
+            let next = focused
+                .and_then(|f| matches.iter().find(|id| id.0 > f.0))
+                .or_else(|| matches.first())
+                .copied();
+            if let Some(id) = next {
+                let effects = self.desktops.with_owner(id, |s| s.window_focused(id));
+                self.apply(effects);
+                self.windows.focus(id);
+                if let Some(frame) = self.windows.frame(id) {
+                    self.warp_cursor(frame);
+                }
+                return;
+            }
+            if focus_exe(&exe) {
+                return;
+            }
+        }
+        launch::exec(run);
     }
 
     /// Takes over or gives back Win+L to match `general.override_win_l` (while tiling).
@@ -722,17 +866,45 @@ impl Daemon {
             command => {
                 let before = self.focused_monitor().map(|m| m.id);
                 let effects = self.desktops.current().apply(&command);
+                let focus = effects.iter().rev().find_map(|e| match e {
+                    Effect::Focus(id) => Some(*id),
+                    _ => None,
+                });
+                let window = focus.and_then(|id| {
+                    effects.iter().rev().find_map(|e| match e {
+                        Effect::Place { id: i, rect } if *i == id => Some(*rect),
+                        _ => None,
+                    })
+                });
                 self.apply(effects);
-                if let Some(monitor) = self.focused_monitor()
-                    && Some(monitor.id) != before
-                {
-                    let center = monitor.rect.center();
-                    if self.loaded.config.cursor.warp {
-                        set_cursor_pos(center);
-                    }
-                    self.show_cursor();
+                let moved_monitor = self.focused_monitor().map(|m| m.id) != before;
+                let target = window.or_else(|| {
+                    self.focused_monitor()
+                        .filter(|_| moved_monitor)
+                        .map(|m| m.rect)
+                });
+                if let Some(target) = target {
+                    self.warp_cursor(target);
                 }
             }
+        }
+    }
+
+    /// After a key moved focus: puts the pointer on the focused window (it stays put if already
+    /// over it), then hides it as typing would, until the mouse moves.
+    fn warp_cursor(&mut self, target: Rect) {
+        if !self.loaded.config.cursor.warp {
+            return;
+        }
+        let (x, y) = cursor_pos();
+        if !target.contains_point(x, y) {
+            set_cursor_pos(target.center());
+        }
+        if self.cursor_hidden.is_some() {
+            // Already hidden by typing: it must not reappear because we moved it.
+            self.cursor_hidden = Some(cursor_pos());
+        } else {
+            self.hide_cursor();
         }
     }
 
@@ -742,6 +914,8 @@ impl Daemon {
 
     /// Starts or stops hiding the pointer while typing, to match `cursor.hide_on_key`.
     fn update_cursor(&mut self) {
+        self.win_drag
+            .set_enabled(self.loaded.config.cursor.drag && self.tiling && !self.paused);
         let hide = self.loaded.config.cursor.hide_on_key && !self.paused;
         self.hotkeys.set_report_typing(hide);
         if !hide {
@@ -761,6 +935,48 @@ impl Daemon {
             tracing::debug!("some system cursors couldn't be hidden");
         }
         self.cursor_check_at = Some(Instant::now() + CURSOR_POLL);
+    }
+
+    /// Win + left-drag: the window follows the pointer, and is re-tiled where it is dropped.
+    fn on_drag(&mut self, event: DragEvent) {
+        match event {
+            DragEvent::Start { window, x, y } => {
+                let id = WindowId(window);
+                if !self.desktops.is_managed(id) || self.desktops.is_hidden(id) {
+                    return;
+                }
+                let Some(outer) = self.windows.outer_rect(id) else {
+                    return;
+                };
+                self.windows.focus(id);
+                self.moving.insert(id);
+                self.tweens.remove(&id);
+                self.drag = Some(Drag {
+                    id,
+                    grab: (x - outer.x, y - outer.y),
+                });
+            }
+            DragEvent::Move { x, y } => {
+                if let Some(drag) = &self.drag {
+                    self.windows
+                        .move_to(drag.id, x - drag.grab.0, y - drag.grab.1);
+                }
+            }
+            DragEvent::End { x, y } => {
+                let Some(drag) = self.drag.take() else {
+                    return;
+                };
+                let id = drag.id;
+                self.moving.remove(&id);
+                self.placed.remove(&id);
+                if let Some(rect) = self.windows.frame(id) {
+                    let effects = self
+                        .desktops
+                        .with_owner(id, |s| s.window_moved(id, rect, (x, y)));
+                    self.apply(effects);
+                }
+            }
+        }
     }
 
     /// Brings a hidden pointer back.
@@ -795,6 +1011,15 @@ impl Daemon {
         self.apply(effects);
     }
 
+    /// The monitor a window should join: under the mouse for new windows, where it already
+    /// sits for existing ones. `None` falls back to the focused monitor.
+    fn monitor_for(&self, rect: Rect, opened: bool) -> Option<usize> {
+        let (x, y) = if opened { cursor_pos() } else { rect.center() };
+        self.monitors
+            .iter()
+            .position(|m| m.rect.contains_point(x, y))
+    }
+
     /// Starts managing a discovered window on the native desktop it lives on. `opened` is
     /// false for windows that already existed (startup / resume), which must not steal focus.
     fn manage(&mut self, found: Discovered, opened: bool) -> Vec<Effect> {
@@ -816,7 +1041,9 @@ impl Daemon {
         let options = ManageOptions {
             floating: outcome.float.unwrap_or(found.floating_hint),
             workspace: outcome.workspace,
-            monitor: outcome.monitor,
+            monitor: outcome
+                .monitor
+                .or_else(|| self.monitor_for(found.rect, opened)),
             rect: found.rect,
             focus: opened && self.loaded.config.general.focus_new_windows,
         };
@@ -1117,16 +1344,19 @@ impl Daemon {
         match event {
             TrayEvent::ToggleTile => self.set_paused(!self.paused),
             TrayEvent::ToggleKey => self.set_remap_paused(!self.remap_paused),
+            TrayEvent::ToggleHotkey => self.set_hotkey_paused(!self.hotkey_paused),
             TrayEvent::ToggleLogging => {
                 logging::set_enabled(!logging::enabled());
                 self.tray.set_logging(logging::enabled());
             }
             TrayEvent::Reload => self.reload(),
             // If the config file couldn't be created, open its folder instead.
-            TrayEvent::OpenConfig => match self.config_path.parent() {
-                Some(dir) if !self.config_path.exists() => launch::open(dir),
-                _ => launch::open(&self.config_path),
-            },
+            TrayEvent::OpenConfig => {
+                if let Err(e) = tile_config::create_if_missing(&self.config_path) {
+                    tracing::warn!("could not create {}: {e}", self.config_path.display());
+                }
+                launch::open(&self.config_path);
+            }
             TrayEvent::OpenLogs => {
                 // Nothing may have been logged yet.
                 let _ = std::fs::create_dir_all(paths::log_dir());

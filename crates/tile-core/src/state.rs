@@ -267,9 +267,33 @@ impl State {
             .unwrap_or_default()
     }
 
+    /// The layout a workspace starts with on `area`: even on portrait, else the default.
+    fn layout_for(&self, area: Rect) -> LayoutKind {
+        if area.h > area.w {
+            LayoutKind::Even
+        } else {
+            self.default_layout
+        }
+    }
+
+    /// A monitor was rotated: portrait switches to even, and back from it on landscape.
+    fn adopt_orientation(&mut self, n: u8, area: Rect) {
+        let want = self.layout_for(area);
+        let Some(ws) = self.workspaces.get_mut(&n) else {
+            return;
+        };
+        let kind = ws.layout.kind();
+        if want != kind && (want == LayoutKind::Even || kind == LayoutKind::Even) {
+            ws.layout = ws.layout.convert(want, area, &self.settings);
+        }
+    }
+
     fn ensure_workspace(&mut self, n: u8, monitor: MonitorId) {
         if !self.workspaces.contains_key(&n) {
-            let ws = Workspace::new(monitor, self.default_layout, &self.settings);
+            let area = self
+                .monitor_index(monitor)
+                .map_or_else(Rect::default, |i| self.monitors[i].info.work_area);
+            let ws = Workspace::new(monitor, self.layout_for(area), &self.settings);
             self.workspaces.insert(n, ws);
         }
     }
@@ -311,14 +335,21 @@ impl State {
                 })
             });
             used.insert(ws);
-            self.ensure_workspace(ws, info.id);
-            if let Some(w) = self.workspaces.get_mut(&ws) {
-                w.monitor = info.id;
-            }
+            let rotated = old.iter().find(|m| m.info.id == info.id).is_some_and(|m| {
+                (m.info.work_area.h > m.info.work_area.w) != (info.work_area.h > info.work_area.w)
+            });
+            let (id, area) = (info.id, info.work_area);
             self.monitors.push(Monitor {
                 info,
                 workspace: ws,
             });
+            self.ensure_workspace(ws, id);
+            if let Some(w) = self.workspaces.get_mut(&ws) {
+                w.monitor = id;
+            }
+            if rotated {
+                self.adopt_orientation(ws, area);
+            }
         }
         let fallback = self.monitors[0].info.id;
         for ws in self.workspaces.values_mut() {
@@ -410,6 +441,10 @@ impl State {
     }
 
     fn focus_workspace(&mut self, n: u8) -> Vec<Effect> {
+        self.focus_workspace_with(n, None)
+    }
+
+    fn focus_workspace_with(&mut self, n: u8, preferred: Option<WindowId>) -> Vec<Effect> {
         let Some(fallback) = self.focused_monitor_id() else {
             return Vec::new();
         };
@@ -421,7 +456,10 @@ impl State {
             ws.monitor = self.monitors[index].info.id;
         }
         self.focused_monitor = index;
-        let target = self.workspaces[&n].focus_candidate();
+        let target = preferred.or_else(|| self.workspaces[&n].focus_candidate());
+        if let (Some(id), Some(ws)) = (target, self.workspaces.get_mut(&n)) {
+            ws.touch(id);
+        }
         self.focused = target;
         let mut effects = self.sync();
         effects.extend(target.map(Effect::Focus));
@@ -443,7 +481,56 @@ impl State {
             return Vec::new();
         };
         let n = self.monitors[index].workspace;
-        self.focus_workspace(n)
+        let from = self.active_rect().unwrap_or(from);
+        let preferred = self.nearest_window(n, from, dir);
+        self.focus_workspace_with(n, preferred)
+    }
+
+    /// The on-screen frame of the focused window on the focused workspace.
+    fn active_rect(&mut self) -> Option<Rect> {
+        let (id, n) = self.active().filter(|(_, n)| self.showing(*n).is_some())?;
+        if let Some(m) = self.windows.get(&id).filter(|m| m.floating) {
+            return Some(m.float_rect);
+        }
+        let area = self.area_of(n);
+        let settings = self.settings.clone();
+        let ws = self.workspaces.get_mut(&n)?;
+        if ws.fullscreen == Some(id) {
+            return None;
+        }
+        let tiles = ws.layout.arrange(area, Some(id), &settings);
+        tiles.iter().find(|t| t.id == id).map(|t| t.rect)
+    }
+
+    /// The visible window on workspace `n` closest to `from` when entering from `dir`.
+    fn nearest_window(&mut self, n: u8, from: Rect, dir: Direction) -> Option<WindowId> {
+        let area = self.area_of(n);
+        let settings = self.settings.clone();
+        let focus = self.workspaces.get(&n)?.focus_candidate();
+        let ws = self.workspaces.get_mut(&n)?;
+        if let Some(full) = ws.fullscreen {
+            return Some(full);
+        }
+        let mut tiles = ws.layout.arrange(area, focus, &settings);
+        tiles.extend(ws.floating.iter().filter_map(|id| {
+            self.windows.get(id).map(|m| Tile {
+                id: *id,
+                rect: m.float_rect,
+                visible: true,
+            })
+        }));
+        // A thin probe on the edge we enter through, aligned with the window we left.
+        let probe = match dir {
+            Direction::Right => Rect::new(area.x - 1, from.y, 1, from.h),
+            Direction::Left => Rect::new(area.right(), from.y, 1, from.h),
+            Direction::Down => Rect::new(from.x, area.y - 1, from.w, 1),
+            Direction::Up => Rect::new(from.x, area.bottom(), from.w, 1),
+        };
+        nearest_in_direction(
+            &probe,
+            dir,
+            tiles.iter().filter(|t| t.visible).map(|t| (t.id, t.rect)),
+        )
     }
 
     fn monitor_in_direction(&self, from: usize, dir: Direction) -> Option<usize> {
@@ -1109,6 +1196,41 @@ mod tests {
         assert!(!effects.iter().any(|e| matches!(e, Effect::Focus(_))));
         s.apply(&Command::MoveFocus(Direction::Left));
         assert_eq!(s.focused(), Some(W));
+    }
+
+    #[test]
+    fn focus_enters_the_nearest_window_on_the_next_monitor() {
+        let mut s = state(2);
+        open(&mut s, W);
+        s.apply(&Command::MoveFocus(Direction::Right));
+        open(&mut s, X);
+        open(&mut s, Y);
+        s.apply(&Command::MoveFocus(Direction::Left));
+        s.apply(&Command::MoveFocus(Direction::Left));
+        assert_eq!(s.focused(), Some(W));
+        let effects = s.apply(&Command::MoveFocus(Direction::Right));
+        assert!(effects.contains(&Effect::Focus(X)));
+        assert_eq!(s.focused(), Some(X));
+        s.apply(&Command::MoveFocus(Direction::Right));
+        s.apply(&Command::MoveFocus(Direction::Left));
+        assert_eq!(s.focused(), Some(X));
+    }
+
+    #[test]
+    fn portrait_monitors_start_with_even() {
+        let mut s = State::new(LayoutSettings::default(), LayoutKind::Dwindle);
+        s.set_monitors(vec![
+            monitor(1, 0),
+            MonitorInfo {
+                id: MonitorId(2),
+                rect: Rect::new(1000, 0, 1080, 1920),
+                work_area: Rect::new(1000, 0, 1080, 1880),
+            },
+        ]);
+        let layouts: Vec<_> = s.snapshot_workspaces().iter().map(|w| w.layout).collect();
+        assert_eq!(layouts, vec![LayoutKind::Dwindle, LayoutKind::Even]);
+        s.set_monitors(vec![monitor(1, 0), monitor(2, 1000)]);
+        assert_eq!(s.snapshot_workspaces()[1].layout, LayoutKind::Dwindle);
     }
 
     #[test]

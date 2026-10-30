@@ -1,39 +1,34 @@
-//! Settings changed from the tray, kept across restarts.
+//! The tray's switches (Tile, Key, Hotkey, logging), kept in the config's `[tray]` table so
+//! they survive a restart.
 
-use std::{fs, path::PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::OnceLock,
+};
 
-use serde::{Deserialize, Serialize};
+pub use tile_config::Tray as Settings;
+use tile_config::{Loaded, default_path, write_tray};
 
-use crate::paths;
+static CONFIG: OnceLock<PathBuf> = OnceLock::new();
 
-#[derive(Debug, Default, Serialize, Deserialize)]
-#[serde(default)]
-pub struct Settings {
-    pub logging: bool,
-    /// Window management is on. Off until switched on.
-    pub tile: bool,
-    /// Key remapping is on. Off until switched on.
-    pub key: bool,
+/// Says which config file holds the switches, when it isn't the default one.
+pub fn init(path: &Path) {
+    let _ = CONFIG.set(path.to_path_buf());
 }
 
 fn file() -> PathBuf {
-    paths::data_dir().join("settings.json")
+    CONFIG.get().cloned().unwrap_or_else(default_path)
 }
 
 pub fn load() -> Settings {
-    fs::read_to_string(file())
-        .ok()
-        .and_then(|text| serde_json::from_str(&text).ok())
-        .unwrap_or_default()
+    Loaded::load_or_default(&file()).map_or_else(|_| Settings::default(), |l| l.config.tray)
 }
 
-/// Loads the settings, applies `change` and writes them back.
+/// Loads the switches, applies `change` and writes them back to the config file.
 pub fn update(change: impl FnOnce(&mut Settings)) {
     let mut settings = load();
     change(&mut settings);
-    let result = fs::create_dir_all(paths::data_dir())
-        .and_then(|()| fs::write(file(), serde_json::to_string(&settings).unwrap_or_default()));
-    if let Err(e) = result {
+    if let Err(e) = write_tray(&file(), &settings) {
         tracing::warn!("failed to save settings: {e}");
     }
 }

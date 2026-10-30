@@ -14,7 +14,7 @@ use std::{
 
 pub use keys::{Keybind, Modifiers};
 pub use rules::{RuleOutcome, Rules};
-pub use schema::{Animations, Color, Config, Cursor, General, Remap, Rule};
+pub use schema::{Animations, Color, Config, Cursor, General, Hotkey, Remap, Rule, Tray};
 pub use watch::watch;
 
 use tile_core::Command;
@@ -38,6 +38,7 @@ pub enum ConfigError {
 pub struct Loaded {
     pub config: Config,
     pub binds: Vec<(Keybind, Command)>,
+    pub hotkeys: Vec<(Keybind, Hotkey)>,
     pub rules: Rules,
     /// `[remap]`, compiled for the remapping engine.
     pub remap: tile_remap::Config,
@@ -76,11 +77,22 @@ impl Loaded {
                 Ok((bind, command))
             })
             .collect::<Result<_, ConfigError>>()?;
+        let hotkeys = config
+            .hotkeys
+            .iter()
+            .map(|(keys, action)| {
+                let bind = keys
+                    .parse::<Keybind>()
+                    .map_err(|e| ConfigError::Bind(keys.clone(), e))?;
+                Ok((bind, action.clone()))
+            })
+            .collect::<Result<_, ConfigError>>()?;
         let rules = Rules::compile(&config.rules)?;
         let remap = remap::compile(&config.remap).map_err(ConfigError::Remap)?;
         Ok(Self {
             config,
             binds,
+            hotkeys,
             rules,
             remap,
         })
@@ -92,7 +104,8 @@ impl Loaded {
     }
 }
 
-/// `%APPDATA%\Tile\config.toml`. Created on first run with every default commented out.
+/// `%APPDATA%\Tile\config.toml`. Created on first run with only the tray switches in it (see
+/// [`create_if_missing`]); everything else comes from the built-in defaults.
 pub fn default_path() -> PathBuf {
     dirs::config_dir()
         .unwrap_or_else(|| PathBuf::from("."))
@@ -100,47 +113,103 @@ pub fn default_path() -> PathBuf {
         .join("config.toml")
 }
 
-const TEMPLATE_HEADER: &str = "\
-# Tile config. Everything below is the built-in default, commented out.
-# Uncomment a line (and its [section] header) to override it; saved changes are applied live.
-# A [binds], [[rules]] or [remap.layers] table replaces that whole set of defaults.
-# [general] tiling and remap switch the window manager and the key remapper on or off.
+const NEW_FILE_HEADER: &str = "\
+# Tile config. Only the tray switches are saved here; everything else uses the built-in
+# defaults. To change one, add its [section] and key. docs/configuration.md lists them all,
+# with the whole default config to copy. Saved changes are applied live.
 
 ";
 
-/// The built-in defaults as TOML, every line commented out so the file changes nothing until
-/// a line is uncommented.
-pub fn template() -> String {
-    let defaults = toml::to_string(&Config::default()).expect("built-in defaults serialize");
-    let mut text = String::from(TEMPLATE_HEADER);
-    for line in defaults.lines() {
-        if !line.is_empty() {
-            text.push_str("# ");
+/// Sets `key = value` for each pair in `[section]` of `text`, keeping everything else (comments,
+/// other keys, order). Missing keys are added, and so is the section.
+fn set_bools(text: &str, section: &str, pairs: &[(&str, bool)]) -> String {
+    let header = format!("[{section}]");
+    let mut lines: Vec<String> = text.lines().map(str::to_owned).collect();
+    let mut start = lines.iter().position(|l| l.trim() == header);
+    if start.is_none() {
+        if lines.last().is_some_and(|l| !l.trim().is_empty()) {
+            lines.push(String::new());
         }
-        text.push_str(line);
-        text.push('\n');
+        lines.push(header);
+        start = Some(lines.len() - 1);
     }
-    text
+    let start = start.unwrap_or(0);
+    for (key, value) in pairs {
+        let end = lines[start + 1..]
+            .iter()
+            .position(|l| l.trim_start().starts_with('['))
+            .map_or(lines.len(), |i| start + 1 + i);
+        let existing = (start + 1..end).find(|&i| {
+            lines[i]
+                .trim_start()
+                .strip_prefix(key)
+                .is_some_and(|rest| rest.trim_start().starts_with('='))
+        });
+        match existing {
+            Some(i) => {
+                // Keep a trailing comment.
+                let comment = lines[i].find('#').map(|c| lines[i][c..].to_owned());
+                lines[i] = match comment {
+                    Some(c) => format!("{key} = {value}  {c}"),
+                    None => format!("{key} = {value}"),
+                };
+            }
+            None => {
+                let at = (start + 1..end)
+                    .rev()
+                    .find(|&i| !lines[i].trim().is_empty())
+                    .map_or(start + 1, |i| i + 1);
+                lines.insert(at, format!("{key} = {value}"));
+            }
+        }
+    }
+    let mut out = lines.join("\n");
+    out.push('\n');
+    out
 }
 
-/// Creates the config's directory, and the file from [`template`] if it doesn't exist yet.
-pub fn ensure_exists(path: &Path) -> io::Result<()> {
+fn tray_pairs(tray: &Tray) -> [(&'static str, bool); 4] {
+    [
+        ("tile", tray.tile),
+        ("key", tray.key),
+        ("hotkey", tray.hotkey),
+        ("logging", tray.logging),
+    ]
+}
+
+/// Creates the config file, and its folder, if there is none, holding only the tray switches at
+/// their defaults: everything else comes from the built-in defaults.
+pub fn create_if_missing(path: &Path) -> io::Result<()> {
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir)?;
     }
+    let text = set_bools(NEW_FILE_HEADER, "tray", &tray_pairs(&Tray::default()));
     match fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(path)
     {
-        // Don't leave a partial file behind: it would stop the template being written again.
-        Ok(mut file) => io::Write::write_all(&mut file, template().as_bytes()).inspect_err(|_| {
+        // Don't leave a partial file behind: it would stop the file being written again.
+        Ok(mut file) => io::Write::write_all(&mut file, text.as_bytes()).inspect_err(|_| {
             drop(file);
             let _ = fs::remove_file(path);
         }),
         Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Ok(()),
         Err(e) => Err(e),
     }
+}
+
+/// Saves the tray switches into `[tray]` of the config file, leaving the rest of it as it is.
+pub fn write_tray(path: &Path, tray: &Tray) -> io::Result<()> {
+    let text = match fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => String::from(NEW_FILE_HEADER),
+        Err(e) => return Err(e),
+    };
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir)?;
+    }
+    fs::write(path, set_bools(&text, "tray", &tray_pairs(tray)))
 }
 
 #[cfg(test)]
@@ -167,17 +236,33 @@ mod tests {
     }
 
     #[test]
-    fn template_is_inert_and_uncomments_to_defaults() {
-        let template = template();
-        assert_eq!(Loaded::parse(&template).unwrap().config, Config::default());
-        let uncommented: String = template[TEMPLATE_HEADER.len()..]
-            .lines()
-            .map(|l| format!("{}\n", l.strip_prefix("# ").unwrap_or(l)))
-            .collect();
+    fn new_file_holds_only_the_tray_and_runs_on_defaults() {
+        let dir = std::env::temp_dir().join(format!("tile-config-{}", std::process::id()));
+        let path = dir.join("config.toml");
+        create_if_missing(&path).unwrap();
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(text.contains("[tray]") && text.contains("hotkey = true"));
+        assert_eq!(Loaded::parse(&text).unwrap().config, Config::default());
+        let tray = Tray {
+            tile: true,
+            ..Tray::default()
+        };
+        write_tray(&path, &tray).unwrap();
+        assert_eq!(Loaded::load(&path).unwrap().config.tray, tray);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn set_bools_edits_in_place() {
+        let text =
+            "[general]\ngaps_in = 2\n\n[tray]\ntile = false  # on\n\n[cursor]\nwarp = false\n";
+        let out = set_bools(text, "tray", &[("tile", true), ("key", true)]);
         assert_eq!(
-            Loaded::parse(&uncommented).unwrap().config,
-            Config::default()
+            out,
+            "[general]\ngaps_in = 2\n\n[tray]\ntile = true  # on\nkey = true\n\n[cursor]\nwarp = false\n"
         );
+        let out = set_bools("[general]\ntiling = true\n", "tray", &[("tile", true)]);
+        assert_eq!(out, "[general]\ntiling = true\n\n[tray]\ntile = true\n");
     }
 
     #[test]
@@ -214,6 +299,42 @@ mod tests {
         // The daemon skips it instead, so the default binds stay valid either way.
         let config = "[general]\noverride_win_l = false\n[binds]\n\"super+l\" = \"movefocus r\"\n";
         assert!(Loaded::parse(config).unwrap().binds[0].0.is_win_l());
+    }
+
+    #[test]
+    fn built_in_hotkeys() {
+        let loaded = Loaded::defaults();
+        let exe = |key: &str| loaded.config.hotkeys[key].exe();
+        assert_eq!(exe("super+b").as_deref(), Some("chrome.exe"));
+        assert_eq!(exe("super+t"), None);
+        assert_eq!(exe("super+q"), None);
+        assert_eq!(loaded.hotkeys.len(), 3);
+    }
+
+    #[test]
+    fn hotkey_forms_parse() {
+        let config = r#"[hotkeys]
+"super+e" = '"C:\Apps\Editor.exe" -n'
+"super+m" = { run = "mail.exe" }
+"#;
+        let loaded = Loaded::parse(config).unwrap();
+        assert_eq!(loaded.hotkeys.len(), 2);
+        assert_eq!(
+            loaded.config.hotkeys["super+e"].exe().as_deref(),
+            Some("Editor.exe")
+        );
+        assert_eq!(
+            loaded.config.hotkeys["super+m"].exe().as_deref(),
+            Some("mail.exe")
+        );
+        assert!(
+            Loaded::parse(
+                "[hotkeys]
+\"hyper+x\" = \"x.exe\"
+"
+            )
+            .is_err()
+        );
     }
 
     #[test]

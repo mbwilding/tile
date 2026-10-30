@@ -49,6 +49,11 @@ fn main() -> anyhow::Result<()> {
         watchdog(pid);
         return Ok(());
     }
+    let config_path = args
+        .config
+        .clone()
+        .unwrap_or_else(tile_config::default_path);
+    settings::init(&config_path);
     if args.launcher {
         let _guard = logging::init("launcher.log", args.log.as_deref());
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -66,8 +71,7 @@ fn main() -> anyhow::Result<()> {
         previous(info);
     }));
 
-    let config_path = args.config.unwrap_or_else(tile_config::default_path);
-    if let Err(e) = tile_config::ensure_exists(&config_path) {
+    if let Err(e) = tile_config::create_if_missing(&config_path) {
         tracing::warn!("could not create {}: {e}", config_path.display());
     }
     let loaded = Loaded::load_or_default(&config_path).unwrap_or_else(|e| {

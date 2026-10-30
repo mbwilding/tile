@@ -1,4 +1,5 @@
 mod dwindle;
+mod even;
 mod master;
 mod monocle;
 mod scrolling;
@@ -8,6 +9,7 @@ use std::{fmt, str::FromStr};
 use serde::{Deserialize, Serialize};
 
 pub use dwindle::Dwindle;
+pub use even::Even;
 pub use master::Master;
 pub use monocle::Monocle;
 pub use scrolling::Scrolling;
@@ -24,10 +26,17 @@ pub enum LayoutKind {
     Master,
     Monocle,
     Scrolling,
+    Even,
 }
 
 impl LayoutKind {
-    pub const ALL: [Self; 4] = [Self::Dwindle, Self::Master, Self::Monocle, Self::Scrolling];
+    pub const ALL: [Self; 5] = [
+        Self::Dwindle,
+        Self::Master,
+        Self::Monocle,
+        Self::Scrolling,
+        Self::Even,
+    ];
 
     pub fn next(self) -> Self {
         let i = Self::ALL.iter().position(|k| *k == self).unwrap_or(0);
@@ -43,6 +52,7 @@ impl FromStr for LayoutKind {
             "dwindle" => Ok(Self::Dwindle),
             "master" => Ok(Self::Master),
             "monocle" => Ok(Self::Monocle),
+            "even" => Ok(Self::Even),
             "scrolling" | "scroller" => Ok(Self::Scrolling),
             _ => Err(()),
         }
@@ -55,6 +65,7 @@ impl fmt::Display for LayoutKind {
             Self::Dwindle => "dwindle",
             Self::Master => "master",
             Self::Monocle => "monocle",
+            Self::Even => "even",
             Self::Scrolling => "scrolling",
         })
     }
@@ -157,6 +168,7 @@ pub enum LayoutState {
     Master(Master),
     Monocle(Monocle),
     Scrolling(Scrolling),
+    Even(Even),
 }
 
 impl LayoutState {
@@ -166,6 +178,7 @@ impl LayoutState {
             LayoutKind::Master => Self::Master(Master::new(s)),
             LayoutKind::Monocle => Self::Monocle(Monocle::default()),
             LayoutKind::Scrolling => Self::Scrolling(Scrolling::default()),
+            LayoutKind::Even => Self::Even(Even::default()),
         }
     }
 
@@ -175,6 +188,7 @@ impl LayoutState {
             Self::Master(_) => LayoutKind::Master,
             Self::Monocle(_) => LayoutKind::Monocle,
             Self::Scrolling(_) => LayoutKind::Scrolling,
+            Self::Even(_) => LayoutKind::Even,
         }
     }
 
@@ -195,6 +209,7 @@ impl LayoutState {
             Self::Master(l) => l,
             Self::Monocle(l) => l,
             Self::Scrolling(l) => l,
+            Self::Even(l) => l,
         }
     }
 
@@ -204,6 +219,7 @@ impl LayoutState {
             Self::Master(l) => l,
             Self::Monocle(l) => l,
             Self::Scrolling(l) => l,
+            Self::Even(l) => l,
         }
     }
 
