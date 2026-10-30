@@ -1,10 +1,11 @@
 use std::{
+    collections::HashMap,
     io,
     sync::{
         Arc, RwLock,
         atomic::{AtomicBool, Ordering},
     },
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use tile_config::{Keybind, Modifiers};
@@ -70,15 +71,39 @@ pub struct Hotkeys {
 struct Matcher {
     hotkeys: Hotkeys,
     tx: mpsc::UnboundedSender<HotkeyEvent>,
+    /// The modifiers each held key was pressed with, and when it was last seen.
+    chords: HashMap<u16, (Modifiers, Instant)>,
+}
+
+/// Auto-repeat of a held key arrives within this long of the last one.
+const REPEAT_WINDOW: Duration = Duration::from_millis(1100);
+
+impl Matcher {
+    /// The modifiers for a key press. A key that is held keeps the ones it was pressed with, so
+    /// letting go of Ctrl before the letter doesn't turn its auto-repeat into a different bind.
+    fn chord(&mut self, vk: u16) -> Modifiers {
+        let now = Instant::now();
+        if let Some((mods, seen)) = self.chords.get_mut(&vk)
+            && now.duration_since(*seen) < REPEAT_WINDOW
+        {
+            *seen = now;
+            return *mods;
+        }
+        let mods = held();
+        self.chords.insert(vk, (mods, now));
+        mods
+    }
 }
 
 fn held() -> Modifiers {
+    // The generic codes (SHIFT, CONTROL, MENU) are not always set for keys the remapper sends,
+    // so each side is asked for itself, as for Win.
     let down = w::GetAsyncKeyState;
     Modifiers {
         super_key: down(co::VK::LWIN) || down(co::VK::RWIN),
-        shift: down(co::VK::SHIFT),
-        ctrl: down(co::VK::CONTROL),
-        alt: down(co::VK::MENU),
+        shift: down(co::VK::LSHIFT) || down(co::VK::RSHIFT) || down(co::VK::SHIFT),
+        ctrl: down(co::VK::LCONTROL) || down(co::VK::RCONTROL) || down(co::VK::CONTROL),
+        alt: down(co::VK::LMENU) || down(co::VK::RMENU) || down(co::VK::MENU),
     }
 }
 
@@ -109,10 +134,17 @@ impl Handler for Matcher {
                 Decision::Pass
             };
         }
+        if !key.down {
+            self.chords.remove(&key.vk);
+        }
         if !key.down || key.vk == SILENT_VK {
             return Decision::Pass;
         }
-        let mods = held();
+        let mods = if MODIFIER_VKS.contains(&key.vk) {
+            held()
+        } else {
+            self.chord(key.vk)
+        };
         let paused = self.hotkeys.paused.load(Ordering::Relaxed);
         let matched = self.hotkeys.table.read().ok().and_then(|t| {
             t.iter()
@@ -134,6 +166,9 @@ impl Handler for Matcher {
             None => extra().map(HotkeyEvent::Hotkey),
         };
         let Some(event) = event else {
+            if mods.super_key && !MODIFIER_VKS.contains(&key.vk) {
+                tracing::info!("no bind for vk {:#x} with {mods:?}", key.vk);
+            }
             if self.hotkeys.report_typing.load(Ordering::Relaxed) && !MODIFIER_VKS.contains(&key.vk)
             {
                 let _ = self.tx.send(HotkeyEvent::Typed);
@@ -141,6 +176,7 @@ impl Handler for Matcher {
             return Decision::Pass;
         };
         if mods.super_key {
+            tracing::info!("bind {event:?} for vk {:#x} with {mods:?}", key.vk);
             tile_hook::send(&[
                 Input::Vk {
                     vk: SILENT_VK,
@@ -180,6 +216,7 @@ impl Hotkeys {
         let matcher = Matcher {
             hotkeys: hotkeys.clone(),
             tx,
+            chords: HashMap::new(),
         };
         tile_hook::spawn("hotkey hook", move || matcher)?;
         Ok(hotkeys)

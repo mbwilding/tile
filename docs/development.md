@@ -35,6 +35,15 @@ All `unsafe` lives in `tile-hook`, each block with a `// SAFETY:` comment; every
 every change returns a list of effects (place, show, hide, focus, close, exec) for the daemon to
 apply. That keeps the layouts and dispatchers testable without Windows.
 
+## Releasing
+
+Every push to `main` that changes more than docs runs the `Release` workflow, which tests, builds
+and publishes a GitHub release holding `tile.zip`, which has `tile.exe` and `tilectl.exe`. No
+tag is pushed: the version is the major and minor from `Cargo.toml`, with the workflow run number
+as the patch (`0.1.7`), and the release creates its own tag. To release by hand, run it from the
+Actions tab or with `gh workflow run release.yml`. Bump the major or minor in `Cargo.toml` for a
+bigger release.
+
 ## Documentation
 
 Everything is documented, and the docs change with the code:

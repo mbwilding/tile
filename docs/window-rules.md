@@ -13,7 +13,7 @@ workspace = 9
 | Action | Effect |
 | --- | --- |
 | `float = true` | float instead of tiling (or `false` to tile a window that would float) |
-| `workspace = n` | open on workspace `n` |
+| `workspace = n` | open on workspace `n` of the monitor it opens on (or the one a `monitor` rule names) |
 | `monitor = n` | open on monitor `n` (from 0, left to right) |
 | `decorations = true` | force the title bar on or off, overriding `general.decorations` |
 | `ignore = true` | leave the window alone entirely |

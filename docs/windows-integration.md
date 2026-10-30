@@ -22,6 +22,15 @@ logs and quits.
 Pausing Tile hands every window back as it was: shown, with its title bar and border. Resuming
 starts again from the windows that are open.
 
+## Win + drag
+
+Holding Win and dragging with the left button moves the window under the pointer, from anywhere
+on it. The click is swallowed and never reaches the app. A low-level mouse hook moves the window
+directly, a few milliseconds apart, so it follows the pointer closely. When you drop a managed
+window, Tile tiles it where it landed, as for a title bar drag. It doesn't work on maximised
+windows, on windows of a higher privilege than Tile, or on the taskbar or desktop. Turn it off
+with `cursor.drag = false`.
+
 ## Virtual desktops
 
 Windows 11 24H2 and later. Every native virtual desktop has its own workspaces and layouts. Task

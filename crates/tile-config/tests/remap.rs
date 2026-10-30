@@ -162,3 +162,15 @@ fn reset_releases_everything() {
     run(e, "+space@100");
     assert_eq!(e.reset(), [Out::Release(Key::LEFTSHIFT)]);
 }
+
+#[test]
+fn control_and_meta_home_row_mods_combine() {
+    // Hold `a` (Control) and `s` (Win), then press `j`.
+    assert_eq!(
+        run(
+            &mut engine(),
+            "+a@0 tick@200 +s@210 tick@410 +j@450 -j@460 -s@500 -a@510"
+        ),
+        "+leftcontrol +leftmeta +j -j -leftmeta -leftcontrol"
+    );
+}

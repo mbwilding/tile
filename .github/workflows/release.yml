@@ -1,0 +1,29 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["**.md", "docs/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace
+      - run: cargo build --release -p tile -p tilectl
+      - name: Package
+        run: |
+          $m = (Select-String -Path Cargo.toml -Pattern '^version = "(\d+)\.(\d+)\.\d+"').Matches[0]
+          "VERSION=$($m.Groups[1]).$($m.Groups[2]).${{ github.run_number }}" >> $env:GITHUB_ENV
+          Copy-Item target/release/tile.exe, target/release/tilectl.exe .
+          Compress-Archive -Path tile.exe, tilectl.exe -DestinationPath tile.zip
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create $env:VERSION tile.zip --target ${{ github.sha }} --title $env:VERSION --generate-notes

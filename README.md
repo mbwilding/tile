@@ -12,7 +12,7 @@ menu is suppressed), so no separate hotkey program is needed.
 - Five layouts, chosen per workspace: **dwindle**, **master/stack**, **monocle**,
   **scrolling** (an endless strip of columns) and **even** (equal shares, used automatically on
   portrait monitors)
-- Numbered workspaces across multiple monitors; floating and fullscreen windows
+- Numbered workspaces, independent per monitor (or synced, if you prefer); floating and fullscreen windows
 - Native virtual desktops (Windows 11 24H2+): every desktop has its own workspaces and layouts
 - Mouse: hold `Win` and drag a window; drag a tile onto another to swap them, or its edge to
   resize the split

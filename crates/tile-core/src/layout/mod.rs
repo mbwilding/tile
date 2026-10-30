@@ -98,6 +98,8 @@ pub struct LayoutSettings {
     pub scrolling_proportion: f32,
     pub scrolling_presets: Vec<f32>,
     pub scrolling_center: CenterMode,
+    /// Each monitor has workspaces of its own. Off, switching workspace switches every monitor.
+    pub independent_workspaces: bool,
 }
 
 impl Default for LayoutSettings {
@@ -112,6 +114,7 @@ impl Default for LayoutSettings {
             scrolling_proportion: 0.5,
             scrolling_presets: vec![1.0 / 3.0, 0.5, 2.0 / 3.0, 1.0],
             scrolling_center: CenterMode::OnOverflow,
+            independent_workspaces: true,
         }
     }
 }

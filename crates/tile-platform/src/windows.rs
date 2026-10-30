@@ -156,6 +156,14 @@ fn focus_hwnd(hwnd: &w::HWND) -> bool {
     focused
 }
 
+/// Puts focus on the desktop. With nothing left to focus on a monitor, Windows would otherwise
+/// pick a window on another one.
+pub fn focus_desktop() {
+    if let Some(desktop) = enumerate(|h| h.GetClassName().is_ok_and(|c| c == "Progman")).first() {
+        focus_hwnd(desktop);
+    }
+}
+
 /// Brings a window of the process `exe` (a file name like `chrome.exe`) on the current virtual
 /// desktop to the foreground, even a minimized one. `false` if there is none.
 pub fn focus_exe(exe: &str) -> bool {
@@ -371,34 +379,6 @@ impl Windows {
             co::ERROR::INVALID_WINDOW_HANDLE => PlaceError::Gone,
             other => PlaceError::Other(other),
         })
-    }
-
-    /// The window's outer rectangle, including its invisible resize borders.
-    pub fn outer_rect(&self, id: WindowId) -> Option<Rect> {
-        self.handles
-            .get(&id)
-            .and_then(|h| h.GetWindowRect().ok())
-            .map(rect)
-    }
-
-    /// Moves the window's outer rectangle so its top-left is at `(x, y)`, keeping its size. Much
-    /// cheaper than [`place`](Self::place), for following the mouse.
-    pub fn move_to(&self, id: WindowId, x: i32, y: i32) -> bool {
-        let Some(hwnd) = self.handles.get(&id) else {
-            return false;
-        };
-        let flags = co::SWP::NOSIZE
-            | co::SWP::NOZORDER
-            | co::SWP::NOACTIVATE
-            | co::SWP::NOOWNERZORDER
-            | co::SWP::ASYNCWINDOWPOS;
-        hwnd.SetWindowPos(
-            w::HwndPlace::None,
-            w::POINT::with(x, y),
-            w::SIZE::default(),
-            flags,
-        )
-        .is_ok()
     }
 
     pub fn show(&self, id: WindowId) {
