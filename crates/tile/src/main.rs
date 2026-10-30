@@ -7,6 +7,7 @@ mod launch;
 mod logging;
 mod paths;
 mod remap;
+mod settings;
 
 use std::path::PathBuf;
 

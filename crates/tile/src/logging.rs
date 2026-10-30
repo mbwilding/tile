@@ -2,12 +2,10 @@
 //! tray (remembered across restarts), by `--log` or by `RUST_LOG`.
 
 use std::{
-    fs, io,
-    path::PathBuf,
+    io,
     sync::atomic::{AtomicBool, Ordering},
 };
 
-use serde::{Deserialize, Serialize};
 use tracing_appender::{
     non_blocking::WorkerGuard,
     rolling::{RollingFileAppender, Rotation},
@@ -16,39 +14,9 @@ use tracing_subscriber::{
     EnvFilter, Layer, filter::filter_fn, fmt, layer::SubscriberExt, util::SubscriberInitExt,
 };
 
-use crate::paths;
+use crate::{paths, settings};
 
 static ENABLED: AtomicBool = AtomicBool::new(false);
-
-/// Settings changed from the tray, kept across restarts.
-#[derive(Debug, Default, Serialize, Deserialize)]
-#[serde(default)]
-struct Settings {
-    logging: bool,
-}
-
-fn settings_file() -> PathBuf {
-    paths::data_dir().join("settings.json")
-}
-
-fn load_settings() -> Settings {
-    fs::read_to_string(settings_file())
-        .ok()
-        .and_then(|text| serde_json::from_str(&text).ok())
-        .unwrap_or_default()
-}
-
-fn save_settings(settings: &Settings) {
-    let result = fs::create_dir_all(paths::data_dir()).and_then(|()| {
-        fs::write(
-            settings_file(),
-            serde_json::to_string(settings).unwrap_or_default(),
-        )
-    });
-    if let Err(e) = result {
-        tracing::warn!("failed to save settings: {e}");
-    }
-}
 
 /// The log file, created on the first write so that nothing is created while logging is off.
 struct LazyFile {
@@ -79,7 +47,7 @@ impl io::Write for LazyFile {
 /// Sets up logging to `name`. `filter` (from `--log`) also switches logging on.
 pub fn init(name: &str, filter: Option<&str>) -> WorkerGuard {
     let enabled =
-        filter.is_some() || std::env::var_os("RUST_LOG").is_some() || load_settings().logging;
+        filter.is_some() || std::env::var_os("RUST_LOG").is_some() || settings::load().logging;
     ENABLED.store(enabled, Ordering::Relaxed);
     let (file, guard) = tracing_appender::non_blocking(LazyFile {
         name: name.to_string(),
@@ -113,5 +81,5 @@ pub fn set_enabled(on: bool) {
     if on {
         tracing::info!("logging on");
     }
-    save_settings(&Settings { logging: on });
+    settings::update(|s| s.logging = on);
 }
