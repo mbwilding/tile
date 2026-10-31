@@ -118,8 +118,11 @@ Explorer owns the tray and there are none to show.
 - **Right click** it for the app's own menu. The launcher stays open behind the menu and comes
   back to the front when the menu closes, unless your choice brought another window forward.
 
-Tray icons are tiny, usually 16 pixels, so one under about three quarters of the size shown is
-swapped for the sharper icon of the app's program.
+Tray icons are tiny, usually 16 or 32 pixels. One at least as big as the size shown is shrunk
+with a smoothing filter. A smaller one gives way to the icon of the app's program, which Windows
+has at larger sizes (up to 64 pixels is asked for, then shrunk to fit), and failing that it is
+grown with a smoothing filter instead of being stretched into blocks. Only the size shown is kept
+in memory.
 
 Some apps (G HUB is one) place the popup of their tray icon by finding the taskbar, which isn't
 there, and open it in the corner of the monitor. For two seconds after a click Tile watches the
@@ -172,7 +175,12 @@ holds the launch count per app and the 20 most recent. Delete the file to forget
 
 ## Appearance
 
-Size, position of the search box, font, colours, corners and opacity are all in the
+The window is exactly as tall as what it shows: the bar, the tray icons, the search box and as
+many result rows as there are, up to `max_visible` (6 by default), so it shrinks as the matches
+narrow and grows again as you delete. It keeps its top where it is, and it opens centred for the
+full number of rows. More results than rows scroll.
+
+Width, the position of the search box, font, colours, corners and opacity are all in the
 [`launcher` section](configuration.md#launcher) of the config. The font, corners and colours
 follow the shared [`theme`](configuration.md#theme) unless set there. Sizes are in pixels at 100%
 scaling and grow with the monitor's scaling. Changes apply the next time it opens.

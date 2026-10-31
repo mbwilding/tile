@@ -483,8 +483,9 @@ impl Default for Remap {
 pub struct Launcher {
     /// Width in pixels at 100% scaling.
     pub width: u32,
-    /// Height in pixels at 100% scaling.
-    pub height: u32,
+    /// The most result rows shown at once. The window is as tall as its content, up to this;
+    /// more results scroll.
+    pub max_visible: usize,
     pub search_position: SearchPosition,
     /// Show each app's icon.
     pub show_icons: bool,
@@ -570,7 +571,7 @@ impl Default for Launcher {
     fn default() -> Self {
         Self {
             width: 560,
-            height: 500,
+            max_visible: 6,
             search_position: SearchPosition::Top,
             show_icons: true,
             compact: false,

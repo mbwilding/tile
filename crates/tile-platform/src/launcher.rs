@@ -414,6 +414,29 @@ fn watch_menu(wnd: &gui::WindowMain, s: &mut State, owner: isize, at: (i32, i32)
     let _ = wnd.hwnd().SetTimer(MENU_TIMER, POPUP_POLL_MS, None);
 }
 
+/// Makes the open window as tall as its content, keeping its top where it is.
+fn fit_window(wnd: &gui::WindowMain, s: &mut State) {
+    let hwnd = wnd.hwnd();
+    if !hwnd.IsWindowVisible() {
+        return;
+    }
+    let wanted = s.wanted_height();
+    let Ok(rect) = hwnd.GetWindowRect() else {
+        return;
+    };
+    if rect.bottom - rect.top != wanted {
+        let resized = hwnd.SetWindowPos(
+            w::HwndPlace::None,
+            w::POINT::default(),
+            w::SIZE::with(rect.right - rect.left, wanted),
+            co::SWP::NOMOVE | co::SWP::NOZORDER | co::SWP::NOACTIVATE,
+        );
+        if let Err(e) = resized {
+            tracing::debug!("couldn't resize the launcher: {e}");
+        }
+    }
+}
+
 impl State {
     fn scale(&self, px: i32) -> i32 {
         px * self.dpi as i32 / 96
@@ -545,6 +568,30 @@ impl State {
                 date_px: 14,
             }
         })
+    }
+
+    /// The most rows shown at once.
+    fn max_rows(&self) -> usize {
+        self.config().max_visible.clamp(1, 30)
+    }
+
+    /// The window height that fits everything but the list exactly, and `rows` rows of it.
+    fn height_for(&mut self, rows: usize) -> i32 {
+        const TALL: i32 = 20_000;
+        let layout = self.layout(w::RECT {
+            left: 0,
+            top: 0,
+            right: 1000,
+            bottom: TALL,
+        });
+        TALL - (layout.list.bottom - layout.list.top) + rows as i32 * layout.row
+    }
+
+    /// The height that fits the results now: as many rows as there are (at least one, for the
+    /// message that there are none), up to the most shown.
+    fn wanted_height(&mut self) -> i32 {
+        let rows = self.results.len().clamp(1, self.max_rows());
+        self.height_for(rows)
     }
 
     fn layout(&mut self, client: w::RECT) -> Layout {
@@ -834,6 +881,14 @@ impl State {
         }
     }
 
+    /// A tray icon drawn at exactly `size` pixels.
+    fn tray_icon_at(&mut self, image: &IconImage, size: i32) -> Option<&tile_hook::Icon> {
+        self.icons
+            .entry(format!("hicon:{}:{size}", image.handle()))
+            .or_insert_with(|| image.render(size))
+            .as_ref()
+    }
+
     /// The icon of a program file, at `size` pixels.
     fn file_icon(&mut self, path: &str, size: i32) -> Option<&tile_hook::Icon> {
         self.icons
@@ -924,7 +979,7 @@ fn run(
         title: "Tile launcher",
         class_name: "tile-launcher",
         class_bg_brush: gui::Brush::None,
-        size: (settings.config.width as i32, settings.config.height as i32),
+        size: (settings.config.width as i32, 100),
         style: co::WS::POPUP | co::WS::CLIPCHILDREN,
         ex_style: co::WS_EX::TOOLWINDOW | co::WS_EX::TOPMOST | co::WS_EX::LAYERED,
         // Dialog handling would swallow typed characters (and Tab) as mnemonics.
@@ -1049,6 +1104,8 @@ fn run(
             }
             // The icons first, since they decide how wide the window must be to hold them.
             s.tray = s.registry.items();
+            // The icon handles of the last time may have been reused for other images.
+            s.icons.retain(|key, _| !key.starts_with("hicon:"));
             let tray_width = s.tray.len() as i32 * s.scale(36) + 2 * s.scale(12);
             let (main_px, date_px) = {
                 let fonts = s.fonts();
@@ -1064,9 +1121,6 @@ fn run(
                 .max(tray_width)
                 .max(bar_width)
                 .min(area.w);
-            let h = s
-                .scale(s.config().height.clamp(100, 4000) as i32)
-                .min(area.h);
             s.query.clear();
             s.surrogate = None;
             s.mouse = None;
@@ -1074,10 +1128,14 @@ fn run(
             s.bar_hover = None;
             s.menu = None;
             s.rank();
+            // Centred for the full number of rows, so it keeps its top as it shrinks.
+            let full = s.max_rows();
+            let top = cy - s.height_for(full).min(area.h) / 2;
+            let h = s.wanted_height().min(area.h);
             drop(s);
             let placed = hwnd.SetWindowPos(
                 w::HwndPlace::Place(co::HWND_PLACE::TOPMOST),
-                w::POINT::with(cx - w / 2, cy - h / 2),
+                w::POINT::with(cx - w / 2, top),
                 w::SIZE::with(w, h),
                 co::SWP::SHOWWINDOW,
             );
@@ -1086,6 +1144,7 @@ fn run(
                 return;
             }
             let _ = hwnd.InvalidateRect(None, false);
+            let _ = hwnd.UpdateWindow();
             // The bar's clock shows seconds.
             let _ = hwnd.SetTimer(CLOCK_TIMER, 1000, None);
             if !crate::windows::focus_hwnd(hwnd) {
@@ -1109,6 +1168,7 @@ fn run(
                         s.icons.clear();
                         s.filter();
                         style_window(wnd.hwnd(), &s.settings);
+                        fit_window(&wnd, &mut s);
                         let _ = wnd.hwnd().InvalidateRect(None, false);
                     }
                     Request::Apps(apps) => {
@@ -1117,6 +1177,7 @@ fn run(
                         if apps != s.all {
                             s.all = apps;
                             s.filter();
+                            fit_window(&wnd, &mut s);
                             let _ = wnd.hwnd().InvalidateRect(None, false);
                         }
                     }
@@ -1130,6 +1191,7 @@ fn run(
                                 s.rank();
                                 s.selected = selected.min(s.results.len().saturating_sub(1));
                                 s.scroll = scroll;
+                                fit_window(&wnd, &mut s);
                             }
                             let _ = wnd.hwnd().InvalidateRect(None, false);
                         }
@@ -1139,6 +1201,9 @@ fn run(
                         w::PostQuitMessage(0);
                     }
                 }
+            }
+            if wnd.hwnd().IsWindowVisible() {
+                let _ = wnd.hwnd().UpdateWindow();
             }
             Ok(0)
         }
@@ -1383,9 +1448,13 @@ fn run(
             }
             if edited {
                 s.rank();
+                fit_window(&wnd, &mut s);
             }
             drop(s);
             let _ = wnd.hwnd().InvalidateRect(None, false);
+            // Painted now, not when Windows next gets to it, so a resize and its new contents
+            // reach the screen together.
+            let _ = wnd.hwnd().UpdateWindow();
             Ok(())
         }
     });
@@ -1415,8 +1484,10 @@ fn run(
             };
             s.query.insert(c);
             s.rank();
+            fit_window(&wnd, &mut s);
             drop(s);
             let _ = wnd.hwnd().InvalidateRect(None, false);
+            let _ = wnd.hwnd().UpdateWindow();
             Ok(())
         }
     });
@@ -1663,21 +1734,19 @@ fn paint_with(s: &mut State, fonts: &Fonts, dc: &w::HDC, client: w::RECT) -> w::
                 x + (cell - size) / 2,
                 slot.top + (slot.bottom - slot.top - size) / 2,
             );
-            // A tray icon is usually 16 pixels: drawn larger it blurs, so a small one gives way
-            // to the sharper icon of the app's program.
-            let own = item
-                .icon
-                .as_ref()
-                .filter(|_| item.icon_size >= size * 3 / 4);
+            // A tray icon is usually 16 or 32 pixels, small for the size shown. One big enough is
+            // shrunk smoothly; a smaller one gives way to the program's own icon, which Windows
+            // has at larger sizes, and failing that is grown smoothly rather than stretched.
             let hdc = dc.ptr() as isize;
-            if let Some(icon) = own {
+            let big_enough = item.icon.as_ref().filter(|_| item.icon_size >= size);
+            if let Some(icon) = big_enough.and_then(|image| s.tray_icon_at(image, size)) {
                 icon.draw(hdc, ix, iy, size);
             } else if let Some(icon) = (!item.path.is_empty())
                 .then(|| s.file_icon(&item.path, size))
                 .flatten()
             {
                 icon.draw(hdc, ix, iy, size);
-            } else if let Some(icon) = &item.icon {
+            } else if let Some(icon) = item.icon.as_ref().and_then(|i| s.tray_icon_at(i, size)) {
                 icon.draw(hdc, ix, iy, size);
             } else {
                 let initial: String = item.name.chars().take(1).collect();

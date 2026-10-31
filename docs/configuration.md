@@ -124,7 +124,7 @@ The app launcher, opened by the `launcher` dispatcher. See [launcher](launcher.m
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `width` | `560` | Width in pixels at 100% scaling (scaled with the monitor). |
-| `height` | `500` | Height in pixels at 100% scaling. |
+| `max_visible` | `6` | The most result rows shown at once. The window is exactly as tall as its content, up to this many rows, so it shrinks as you type; more results scroll. |
 | `search_position` | `top` | Where the search box sits: `top` or `bottom`. |
 | `show_icons` | `true` | Show each app's icon. |
 | `compact` | `false` | Shorter rows, without the app id under the name. |
@@ -278,7 +278,7 @@ remap:
 
 launcher:
   width: 560                    # px at 100% scaling
-  height: 500
+  max_visible: 6                # result rows shown at once; the window is as tall as its content
   search_position: top          # top | bottom
   show_icons: true
   compact: false                # shorter rows, no app id line

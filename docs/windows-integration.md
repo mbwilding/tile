@@ -94,7 +94,15 @@ Many apps (and Tile's own tray icon) ask `Shell_NotifyIconGetRect` where an icon
 show a menu or ignore the click. The shell answers that with two `WM_COPYDATA` questions (the
 corner, then the size, each packed into the reply), and Tile answers them with a small square
 under the pointer, where the click that opens the menu was made. Without an answer such an app
-shows its menu in the screen's corner, or not at all. The window goes away when another taskbar
+shows its menu in the screen's corner, or not at all.
+
+Apps also ask the taskbar's position with `SHAppBarMessage` (`ABM_GETTASKBARPOS`, and register
+app bars, as the touch keyboard does). Tile answers those too, so the call doesn't fail: the
+taskbar is said to be a small square under the pointer, and the quiet questions (is it hiding,
+register, remove) get the answer of a taskbar with nothing to hide. Where the answer goes is an
+address in the asking program, which Tile writes only into programs without administrator
+rights, since the sender can't be told apart from another program. An elevated app (G HUB is
+one) is told the call worked but gets no position. The window goes away when another taskbar
 appears. Turning the Shell switch on writes the Winlogon `Shell` value under `HKCU` and sets
 `SeparateProcess`; turning it off removes the value, if it is Tile's, and puts `SeparateProcess`
 back. Tile checks both against the switch each time it starts and when the config changes.

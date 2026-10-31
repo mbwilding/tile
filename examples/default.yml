@@ -69,7 +69,7 @@ remap:
 
 launcher:
   width: 560 # px at 100% scaling
-  height: 500
+  max_visible: 6 # result rows shown at once; the window is as tall as its content
   search_position: top # top | bottom
   show_icons: true
   compact: false # shorter rows, no app id line

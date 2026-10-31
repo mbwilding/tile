@@ -17,12 +17,17 @@ use std::{
 };
 
 use windows_sys::Win32::{
-    Foundation::{CloseHandle, FALSE, HWND, LPARAM, LRESULT, POINT, WPARAM},
+    Foundation::{CloseHandle, FALSE, HANDLE, HWND, LPARAM, LRESULT, POINT, WPARAM},
     Graphics::Gdi::{BITMAP, DeleteObject, GetObjectW, HDC},
+    Security::{GetTokenInformation, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation},
     System::{
         DataExchange::COPYDATASTRUCT,
+        Diagnostics::Debug::WriteProcessMemory,
         LibraryLoader::GetModuleHandleW,
-        Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW},
+        Threading::{
+            OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_VM_OPERATION,
+            PROCESS_VM_WRITE, QueryFullProcessImageNameW,
+        },
     },
     UI::WindowsAndMessaging::{
         ASFW_ANY, AllowSetForegroundWindow, CHANGEFILTERSTRUCT, ChangeWindowMessageFilterEx,
@@ -41,6 +46,8 @@ use windows_sys::Win32::{
 const TRAY_CLASS: &str = "Shell_TrayWnd";
 /// The `dwData` of a `WM_COPYDATA` that carries a tray icon message.
 const COPYDATA_NOTIFY: usize = 1;
+/// The `dwData` of an app bar message (`SHAppBarMessage`): apps asking about the taskbar.
+const COPYDATA_APPBAR: usize = 0;
 /// The `dwData` of the question `Shell_NotifyIconGetRect` asks: where is this icon?
 const COPYDATA_RECT: usize = 3;
 /// The question is asked twice: once for the icon's top left corner, once for its size.
@@ -103,6 +110,17 @@ impl Drop for OwnedIcon {
 pub struct IconImage(Arc<OwnedIcon>);
 
 impl IconImage {
+    /// The icon handle's value, which differs for every icon an app sets.
+    pub fn handle(&self) -> isize {
+        self.0.0
+    }
+
+    /// The icon drawn at exactly `size` pixels, scaled smoothly, for drawing 1:1 without
+    /// Windows stretching it.
+    pub fn render(&self, size: i32) -> Option<crate::Icon> {
+        crate::render_hicon(self.0.0, size)
+    }
+
     /// The icon's width in pixels as the app made it: a tray icon is usually 16, so drawing it
     /// bigger blurs it. 0 if it can't be read.
     pub fn size(&self) -> i32 {
@@ -259,6 +277,101 @@ fn hex(data: &[u8]) -> String {
         .join(" ")
 }
 
+const ABM_NEW: u32 = 0;
+const ABM_REMOVE: u32 = 1;
+const ABM_QUERYPOS: u32 = 2;
+const ABM_SETPOS: u32 = 3;
+const ABM_GETSTATE: u32 = 4;
+const ABM_GETTASKBARPOS: u32 = 5;
+const ABM_ACTIVATE: u32 = 6;
+const ABM_GETAUTOHIDEBAR: u32 = 7;
+const ABM_SETAUTOHIDEBAR: u32 = 8;
+const ABM_WINDOWPOSCHANGED: u32 = 9;
+const ABM_SETSTATE: u32 = 10;
+/// `ABE_BOTTOM`.
+const EDGE_BOTTOM: u32 = 3;
+/// Where in the sender's block the shell writes the edge, then the rectangle.
+const ABM_EDGE_AT: u64 = 28;
+
+/// A decoded app bar message.
+#[derive(Debug, PartialEq, Eq)]
+struct AppBarRequest {
+    /// `ABM_*`.
+    message: u32,
+    /// An address in the sender's process of the block the answer goes into.
+    shared: u64,
+    pid: u32,
+}
+
+/// Decodes the data of a `dwData` 0 `WM_COPYDATA`: the `APPBARDATA`, then the message, and where
+/// in which process the answer is written.
+fn parse_appbar(data: &[u8]) -> Option<AppBarRequest> {
+    Some(AppBarRequest {
+        message: u32_at(data, 40)?,
+        shared: u64::from_le_bytes(data.get(48..56)?.try_into().ok()?),
+        pid: u32_at(data, 56)?,
+    })
+}
+
+/// Whether the process `pid` runs with administrator rights. `true` when that can't be told.
+fn is_elevated(pid: u32) -> bool {
+    // SAFETY: the handles are closed below; the out values are live locals of the sizes given.
+    unsafe {
+        let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+        if process.is_null() {
+            return true;
+        }
+        let mut token: HANDLE = ptr::null_mut();
+        let mut elevated = true;
+        if OpenProcessToken(process, TOKEN_QUERY, &raw mut token) != 0 {
+            let mut info = TOKEN_ELEVATION { TokenIsElevated: 1 };
+            let mut got = 0;
+            let size = std::mem::size_of::<TOKEN_ELEVATION>() as u32;
+            if GetTokenInformation(
+                token,
+                TokenElevation,
+                (&raw mut info).cast(),
+                size,
+                &raw mut got,
+            ) != 0
+            {
+                elevated = info.TokenIsElevated != 0;
+            }
+            CloseHandle(token);
+        }
+        CloseHandle(process);
+        elevated
+    }
+}
+
+/// Writes `bytes` at `address` in the process `pid`. Only into a process without administrator
+/// rights: the sender names the process and address itself and can't be told apart from another
+/// program, and Tile's own rights must not become a way to write into one that has more than
+/// the sender. A program can already write into its peers, so nothing is gained from this.
+fn write_to_sender(pid: u32, address: u64, bytes: &[u8]) -> bool {
+    if is_elevated(pid) {
+        return false;
+    }
+    // SAFETY: the handle is closed; `bytes` is a live slice of the length given. The address is
+    // another process's, which the call checks.
+    unsafe {
+        let process = OpenProcess(PROCESS_VM_OPERATION | PROCESS_VM_WRITE, FALSE, pid);
+        if process.is_null() {
+            return false;
+        }
+        let mut written = 0;
+        let ok = WriteProcessMemory(
+            process,
+            address as usize as *const core::ffi::c_void,
+            bytes.as_ptr().cast(),
+            bytes.len(),
+            &raw mut written,
+        );
+        CloseHandle(process);
+        ok != 0 && written == bytes.len()
+    }
+}
+
 /// A decoded `Shell_NotifyIconGetRect` question.
 #[derive(Debug, PartialEq, Eq)]
 struct RectRequest {
@@ -387,6 +500,40 @@ impl Registry {
             (Some(a), Some(b)) => a == b,
             _ => e.key.hwnd == hwnd && e.key.id == id,
         })
+    }
+
+    /// Answers what an app asks about the taskbar, so that it isn't told that it failed. There is
+    /// no taskbar: where it is, is said to be under the pointer (an app places its popup by it),
+    /// and the other questions get the quiet answers of a taskbar that has no app bars and hides
+    /// nothing.
+    fn app_bar(&self, data: &[u8]) -> LRESULT {
+        let Some(request) = parse_appbar(data) else {
+            return 0;
+        };
+        match request.message {
+            ABM_GETTASKBARPOS => {
+                let mut at = POINT { x: 0, y: 0 };
+                // SAFETY: `at` is a live POINT to write to.
+                unsafe { GetCursorPos(&raw mut at) };
+                let half = ICON_RECT / 2;
+                let mut answer = Vec::with_capacity(20);
+                answer.extend_from_slice(&EDGE_BOTTOM.to_le_bytes());
+                for value in [at.x - half, at.y - half, at.x + half, at.y + half] {
+                    answer.extend_from_slice(&value.to_le_bytes());
+                }
+                // The call has succeeded either way; without the answer the caller sees no
+                // taskbar position, as before, but no failure.
+                write_to_sender(request.pid, request.shared + ABM_EDGE_AT, &answer);
+                1
+            }
+            ABM_GETSTATE | ABM_GETAUTOHIDEBAR => 0,
+            ABM_NEW | ABM_REMOVE | ABM_QUERYPOS | ABM_SETPOS | ABM_ACTIVATE
+            | ABM_SETAUTOHIDEBAR | ABM_WINDOWPOSCHANGED | ABM_SETSTATE => 1,
+            other => {
+                tracing::info!("unknown app bar message {other}: {}", hex(data));
+                0
+            }
+        }
     }
 
     /// Answers where an icon is. With no taskbar there is no icon to point at, so it says it is
@@ -557,6 +704,7 @@ unsafe extern "system" fn window_proc(
                     r.borrow().as_ref().map(|registry| match kind {
                         COPYDATA_NOTIFY => LRESULT::from(registry.apply(data)),
                         COPYDATA_RECT => registry.icon_rect(data),
+                        COPYDATA_APPBAR => registry.app_bar(data),
                         _ => {
                             // Not a tray message: something asking the taskbar (an app bar, a
                             // menu) that Tile doesn't answer. Logged to see what is asked.
@@ -863,6 +1011,30 @@ mod tests {
         data
     }
 
+    /// What `SHAppBarMessage` sends: an `APPBARDATA`, then the message and where the answer goes.
+    fn appbar_message(message: u32, shared: u64, pid: u32) -> Vec<u8> {
+        let mut data = vec![0u8; 64];
+        data[0..4].copy_from_slice(&40u32.to_le_bytes());
+        data[40..44].copy_from_slice(&message.to_le_bytes());
+        data[48..56].copy_from_slice(&shared.to_le_bytes());
+        data[56..60].copy_from_slice(&pid.to_le_bytes());
+        data
+    }
+
+    #[test]
+    fn parses_the_app_bar_message() {
+        let data = appbar_message(ABM_GETTASKBARPOS, 0x1e4_b450_fe80, 41852);
+        assert_eq!(
+            parse_appbar(&data),
+            Some(AppBarRequest {
+                message: ABM_GETTASKBARPOS,
+                shared: 0x1e4_b450_fe80,
+                pid: 41852,
+            })
+        );
+        assert_eq!(parse_appbar(&data[..50]), None);
+    }
+
     #[test]
     fn parses_the_position_question() {
         let data = rect_question(RECT_SIZE, -9, 4);
@@ -906,6 +1078,25 @@ mod tests {
             CLASS,
             &message(NIM_MODIFY, own, 9, NIF_TIP, 0, "none")
         ));
+        // App bar questions: the quiet ones succeed, and the taskbar's position is written into
+        // the sender's block, here this process's, unless it has administrator rights.
+        let own_pid = std::process::id();
+        let mut block = [0u8; 64];
+        let at = block.as_mut_ptr() as u64;
+        let pos = appbar_message(ABM_GETTASKBARPOS, at, own_pid);
+        assert_eq!(send_kind(CLASS, COPYDATA_APPBAR, &pos), 1);
+        let edge = u32::from_le_bytes(block[28..32].try_into().unwrap());
+        let width = i32::from_le_bytes(block[40..44].try_into().unwrap())
+            - i32::from_le_bytes(block[32..36].try_into().unwrap());
+        if is_elevated(own_pid) {
+            assert_eq!(edge, 0);
+        } else {
+            assert_eq!((edge, width), (EDGE_BOTTOM, ICON_RECT));
+        }
+        let state = appbar_message(ABM_GETSTATE, 0, own_pid);
+        assert_eq!(send_kind(CLASS, COPYDATA_APPBAR, &state), 0);
+        let register = appbar_message(ABM_NEW, 0, own_pid);
+        assert_eq!(send_kind(CLASS, COPYDATA_APPBAR, &register), 1);
         // Where the icon is is asked in two halves; the size is the same wherever it is.
         let size = send_kind(CLASS, COPYDATA_RECT, &rect_question(RECT_SIZE, own, 1));
         assert_eq!(size, pack_pair(ICON_RECT, ICON_RECT));
