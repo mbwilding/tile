@@ -20,6 +20,7 @@ menu is suppressed), so no separate hotkey program is needed.
   Terminal window), and `Win+Q` to close, working even with tiling off
 - An app launcher: fuzzy search over everything Start lists, with icons, that also runs command
   lines and Tile dispatchers
+- A workspace indicator that flashes the workspace number when you switch
 - Coloured focus borders (Windows 11) and eased move/resize animations
 - Optional title bar removal for tiled windows, with per-app overrides
 - Key remapping in keyd's terms: layers, modifier layers, `overload()`, `overloadt()` and key
@@ -87,8 +88,9 @@ terminal can leave windows hidden and the pointer blank until Tile next starts (
 ## Configuration
 
 Tile runs on its built-in defaults. On first run it creates `%APPDATA%\Tile\config.yml` holding
-only the tray's switches (Tile, Remap, logging), which it saves there as you change them.
-Add a section and key to change anything else; saved changes apply immediately. [Configuration](docs/configuration.md) has every setting and the whole default
+only the tray's switches (Tile, Remap, Log), which it saves there as you change them.
+Add a section and key to change anything else; saved changes apply immediately, and a broken
+config turns the tray icon red while the last good one stays in use. [Configuration](docs/configuration.md) has every setting and the whole default
 config to copy and paste, and [`examples/`](examples) has complete configs to start from.
 
 ## Documentation

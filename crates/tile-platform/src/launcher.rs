@@ -17,7 +17,7 @@ use std::{
 };
 
 use regex::RegexSet;
-use tile_config::{Color, Corners, Launcher as Config, SearchPosition};
+use tile_config::{Color, Corners, Launcher as Config, LauncherStyle, SearchPosition};
 use tile_core::{
     Command, Rect, calc,
     input::Input,
@@ -61,11 +61,12 @@ enum Picked {
     Nothing,
 }
 
-/// The `launcher` config section with its `hide` patterns compiled.
+/// The `launcher` config section with its `hide` patterns compiled and its look resolved.
 #[derive(Debug, Clone)]
 pub struct LauncherSettings {
     pub config: Config,
     pub hide: RegexSet,
+    pub style: LauncherStyle,
 }
 
 enum Request {
@@ -131,7 +132,8 @@ impl Launcher {
     }
 }
 
-fn wake(hwnd: &AtomicIsize) {
+/// Has the window in `hwnd` (once made) read its requests.
+pub(crate) fn wake(hwnd: &AtomicIsize) {
     let hwnd = hwnd.load(Ordering::Acquire);
     if hwnd != 0 {
         tile_hook::post_app(hwnd, 0);
@@ -170,7 +172,7 @@ fn list_apps() -> Vec<App> {
     apps
 }
 
-const fn colorref(c: Color) -> w::COLORREF {
+pub(crate) const fn colorref(c: Color) -> w::COLORREF {
     w::COLORREF::from_rgb(c.r, c.g, c.b)
 }
 
@@ -278,7 +280,7 @@ impl State {
             let main_px = (config.font_size.clamp(6, 48) * self.dpi / 72) as i32;
             let small_px = main_px * 4 / 5;
             let font = |px: i32| {
-                let mut lf = w::LOGFONT::new_face(-px, &config.font);
+                let mut lf = w::LOGFONT::new_face(-px, &self.settings.style.font);
                 lf.lfQuality = co::QUALITY::CLEARTYPE;
                 w::HFONT::CreateFontIndirect(&lf)
             };
@@ -292,7 +294,7 @@ impl State {
                     });
                 }
                 (Err(e), _) | (_, Err(e)) => {
-                    tracing::warn!("launcher font `{}`: {e}", config.font);
+                    tracing::warn!("launcher font `{}`: {e}", self.settings.style.font);
                 }
             }
         }
@@ -499,14 +501,19 @@ fn open_area(fallback: Option<Rect>) -> Option<Rect> {
     })
 }
 
-fn style_window(hwnd: &w::HWND, config: &Config) {
-    let corners = match config.corners {
+pub(crate) const fn corner_preference(corners: Corners) -> co::DWMWCP {
+    match corners {
         Corners::Round => co::DWMWCP::ROUND,
         Corners::Small => co::DWMWCP::ROUNDSMALL,
         Corners::Square => co::DWMWCP::DONOTROUND,
-    };
+    }
+}
+
+fn style_window(hwnd: &w::HWND, settings: &LauncherSettings) {
+    let (config, style) = (&settings.config, &settings.style);
+    let corners = corner_preference(style.corners);
     let _ = hwnd.DwmSetWindowAttribute(w::DwmAttr::WindowCornerPreference(corners));
-    let _ = hwnd.DwmSetWindowAttribute(w::DwmAttr::BorderColor(colorref(config.border)));
+    let _ = hwnd.DwmSetWindowAttribute(w::DwmAttr::BorderColor(colorref(style.border)));
     let alpha = (config.opacity.clamp(0.1, 1.0) * 255.0).round() as u8;
     if let Err(e) =
         hwnd.SetLayeredWindowAttributes(w::COLORREF::from_rgb(0, 0, 0), alpha, co::LWA::ALPHA)
@@ -585,7 +592,7 @@ fn run(
             hwnd_slot.clone(),
         );
         move |_| {
-            style_window(wnd.hwnd(), state.borrow().config());
+            style_window(wnd.hwnd(), &state.borrow().settings);
             hwnd_slot.store(wnd.hwnd().ptr() as isize, Ordering::Release);
             refresh();
             // Requests sent before the window existed.
@@ -661,7 +668,7 @@ fn run(
                         s.fonts = None;
                         s.icons.clear();
                         s.filter();
-                        style_window(wnd.hwnd(), s.config());
+                        style_window(wnd.hwnd(), &s.settings);
                         let _ = wnd.hwnd().InvalidateRect(None, false);
                     }
                     Request::Apps(apps) => {
@@ -950,15 +957,16 @@ fn paint(s: &mut State, dc: &w::HDC, client: w::RECT) -> w::SysResult<()> {
 
 fn paint_with(s: &mut State, fonts: &Fonts, dc: &w::HDC, client: w::RECT) -> w::SysResult<()> {
     let config = s.config().clone();
+    let style = s.settings.style.clone();
     let layout = s.layout_with(fonts, client);
     let radius = s.scale(16);
     let pad = s.scale(12);
-    let background = w::HBRUSH::CreateSolidBrush(colorref(config.background))?;
+    let background = w::HBRUSH::CreateSolidBrush(colorref(style.background))?;
     dc.FillRect(client, &background)?;
     dc.SetBkMode(co::BKMODE::TRANSPARENT)?;
 
     // The search box.
-    let field = mix(config.background, config.foreground, 20);
+    let field = mix(style.background, style.foreground, 20);
     fill_round(dc, layout.search, radius, field)?;
     let mut inner = layout.search;
     inner.left += pad;
@@ -967,9 +975,9 @@ fn paint_with(s: &mut State, fonts: &Fonts, dc: &w::HDC, client: w::RECT) -> w::
     let left = co::DT::LEFT | co::DT::VCENTER;
     if s.query.text().is_empty() {
         let placeholder = config.placeholder_text();
-        text(dc, main, config.dimmed, &placeholder, inner, left)?;
+        text(dc, main, style.dimmed, &placeholder, inner, left)?;
     } else {
-        text(dc, main, config.foreground, s.query.text(), inner, left)?;
+        text(dc, main, style.foreground, s.query.text(), inner, left)?;
     }
     let typed = {
         let _font = dc.SelectObject(main)?;
@@ -984,7 +992,7 @@ fn paint_with(s: &mut State, fonts: &Fonts, dc: &w::HDC, client: w::RECT) -> w::
         right: caret_x + s.scale(2).max(1),
         bottom: mid + caret_h / 2,
     };
-    let caret_brush = w::HBRUSH::CreateSolidBrush(colorref(config.selected))?;
+    let caret_brush = w::HBRUSH::CreateSolidBrush(colorref(style.selected))?;
     dc.FillRect(caret, &caret_brush)?;
 
     // The results.
@@ -997,7 +1005,7 @@ fn paint_with(s: &mut State, fonts: &Fonts, dc: &w::HDC, client: w::RECT) -> w::
         text(
             dc,
             main,
-            config.dimmed,
+            style.dimmed,
             message,
             layout.list,
             co::DT::CENTER | co::DT::VCENTER,
@@ -1016,10 +1024,10 @@ fn paint_with(s: &mut State, fonts: &Fonts, dc: &w::HDC, client: w::RECT) -> w::
         };
         let selected = index == s.selected;
         let (fg, dim) = if selected {
-            fill_round(dc, row, radius, config.selected)?;
-            (config.selected_foreground, config.selected_foreground)
+            fill_round(dc, row, radius, style.selected)?;
+            (style.selected_foreground, style.selected_foreground)
         } else {
-            (config.foreground, config.dimmed)
+            (style.foreground, style.dimmed)
         };
         let mut x = row.left + pad;
         if layout.icon > 0 {

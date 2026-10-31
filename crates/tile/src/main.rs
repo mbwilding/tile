@@ -83,15 +83,18 @@ fn main() -> anyhow::Result<()> {
     if let Err(e) = tile_config::create_if_missing(&config_path) {
         tracing::warn!("could not create {}: {e}", config_path.display());
     }
-    let loaded = Loaded::load_or_default(&config_path).unwrap_or_else(|e| {
-        tracing::error!("{e}; using the built-in defaults");
-        Loaded::defaults()
-    });
+    let (loaded, config_error) = match Loaded::load_or_default(&config_path) {
+        Ok(loaded) => (loaded, None),
+        Err(e) => {
+            tracing::error!("{e}; using the built-in defaults");
+            (Loaded::defaults(), Some(e.to_string()))
+        }
+    };
 
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
-    let result = runtime.block_on(daemon::run(config_path, loaded));
+    let result = runtime.block_on(daemon::run(config_path, loaded, config_error));
     if let Err(e) = &result {
         tracing::error!("{e:#}");
     }

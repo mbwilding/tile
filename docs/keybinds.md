@@ -66,7 +66,7 @@ A `binds` value is `<dispatcher> [arguments]`. `tilectl dispatch` runs the same 
 | `movewindow <l\|r\|u\|d>` | move the window that way, to the next monitor at the edge |
 | `resizeactive <dx> <dy>` | grow (or shrink, with negative values) by pixels |
 | `cyclenext` / `cycleprev` | focus the next / previous window in layout order |
-| `workspace <n>` | switch to workspace `n` (1-255) on the focused monitor, or on every monitor when `independent_workspaces` is off |
+| `workspace <n>` | switch to workspace `n` (1-255) on the focused monitor, or on every monitor when `independent_workspaces` is off; the [workspace indicator](configuration.md#workspace_indicator) flashes its number |
 | `movetoworkspace <n>` | move the window to workspace `n` and follow it |
 | `movetoworkspacesilent <n>` | move the window to workspace `n` and stay |
 | `focusmonitor <l\|r\|u\|d>` | focus the next monitor that way |

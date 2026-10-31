@@ -10,9 +10,9 @@ use tile_config::Loaded;
 use tile_core::{Command, Effect, LayoutKind, ManageOptions, MonitorInfo, Rect, WindowId};
 use tile_ipc::{Event, Incoming, Query, Request, Response, Server};
 use tile_platform::{
-    Animation, Discovered, DragEvent, HotkeyEvent, Hotkeys, Launcher, LauncherEvent,
-    LauncherSettings, Mover, PlaceError, Tray, TrayEvent, WinDrag, WinEvent, WinEventHooks,
-    Windows, close_foreground, cursor_pos,
+    Animation, Discovered, DragEvent, HotkeyEvent, Hotkeys, Indicator, IndicatorSettings, Launcher,
+    LauncherEvent, LauncherSettings, Mover, PlaceError, Tray, TrayEvent, WinDrag, WinEvent,
+    WinEventHooks, Windows, close_foreground, cursor_pos,
     desktops::{self as vd, DesktopChange, DesktopId},
     focus_desktop, focus_exe, foreground, is_shell_window, monitors, mouse_button_down,
     set_cursor_pos,
@@ -75,6 +75,7 @@ struct Daemon {
     drag: Option<WindowId>,
     tray: Tray,
     launcher: Launcher,
+    indicator: Indicator,
     /// The window manager is paused (tray "Tile").
     paused: bool,
     /// The key remapper is paused (tray "Remap").
@@ -126,6 +127,14 @@ fn launcher_settings(loaded: &Loaded) -> LauncherSettings {
     LauncherSettings {
         config: loaded.config.launcher.clone(),
         hide: loaded.launcher_hide.clone(),
+        style: loaded.config.launcher_style(),
+    }
+}
+
+fn indicator_settings(loaded: &Loaded) -> IndicatorSettings {
+    IndicatorSettings {
+        config: loaded.config.workspace_indicator.clone(),
+        style: loaded.config.indicator_style(),
     }
 }
 
@@ -201,7 +210,13 @@ fn on_other_desktop(raw: isize) -> bool {
     matches!((vd::desktop_of(raw), vd::current_desktop()), (Some(d), Some(c)) if d != c)
 }
 
-pub async fn run(config_path: PathBuf, loaded: Loaded) -> anyhow::Result<()> {
+/// Runs the window manager. `config_error` says why the config file didn't load, if it didn't
+/// (and `loaded` is the defaults).
+pub async fn run(
+    config_path: PathBuf,
+    loaded: Loaded,
+    config_error: Option<String>,
+) -> anyhow::Result<()> {
     if tile_ipc::is_running().await {
         bail!("Tile is already running");
     }
@@ -236,6 +251,7 @@ pub async fn run(config_path: PathBuf, loaded: Loaded) -> anyhow::Result<()> {
         launcher_settings(&loaded),
         paths::data_dir().join("launcher.json"),
     );
+    let indicator = Indicator::spawn(indicator_settings(&loaded));
     let _watcher = tile_config::watch(&config_path, move || {
         let _ = config_tx.send(());
     })
@@ -258,6 +274,7 @@ pub async fn run(config_path: PathBuf, loaded: Loaded) -> anyhow::Result<()> {
         drag: None,
         tray,
         launcher,
+        indicator,
         paused: !saved.tile,
         remap_paused: !saved.remap,
         quit: false,
@@ -295,6 +312,7 @@ pub async fn run(config_path: PathBuf, loaded: Loaded) -> anyhow::Result<()> {
     daemon.update_remap();
     daemon.update_cursor();
     daemon.tray.set_logging(logging::enabled());
+    daemon.tray.set_config_error(config_error);
     tracing::info!("Tile started");
 
     daemon
@@ -443,6 +461,7 @@ impl Daemon {
         }
         paths::save_restore(&Restore::default());
         self.launcher.shutdown();
+        self.indicator.shutdown();
         self.tray.shutdown();
     }
 
@@ -580,6 +599,7 @@ impl Daemon {
     fn reload(&mut self) {
         match Loaded::load_or_default(&self.config_path) {
             Ok(loaded) => {
+                self.tray.set_config_error(None);
                 // Our own save of a tray switch lands here too; nothing else changed.
                 let mut same = loaded.config.clone();
                 same.tray = self.loaded.config.tray.clone();
@@ -589,6 +609,8 @@ impl Daemon {
                 }
                 self.loaded = loaded;
                 self.launcher.set_settings(launcher_settings(&self.loaded));
+                self.indicator
+                    .set_settings(indicator_settings(&self.loaded));
                 self.install_binds();
                 self.update_remap();
                 self.update_cursor();
@@ -600,7 +622,10 @@ impl Daemon {
                 }
                 tracing::info!("config reloaded");
             }
-            Err(e) => tracing::error!("keeping previous config: {e}"),
+            Err(e) => {
+                tracing::error!("keeping previous config: {e}");
+                self.tray.set_config_error(Some(e.to_string()));
+            }
         }
     }
 
@@ -834,6 +859,8 @@ impl Daemon {
                 }
             }
             command => {
+                let switches =
+                    matches!(command, Command::Workspace(_) | Command::MoveToWorkspace(_));
                 let before = self.focused_monitor().map(|m| m.id);
                 let effects = self.desktops.current().apply(&command);
                 let focus = effects.iter().rev().find_map(|e| match e {
@@ -856,6 +883,9 @@ impl Daemon {
                 if let Some(target) = target {
                     self.warp_cursor(target);
                 }
+                if switches {
+                    self.show_workspace();
+                }
             }
         }
     }
@@ -875,6 +905,16 @@ impl Daemon {
             self.cursor_hidden = Some(cursor_pos());
         } else {
             self.hide_cursor();
+        }
+    }
+
+    /// Flashes the focused workspace's number on its monitor.
+    fn show_workspace(&self) {
+        let state = self.desktops.current_ref();
+        if let (Some(workspace), Some(monitor)) =
+            (state.focused_workspace(), state.focused_monitor())
+        {
+            self.indicator.show(workspace, monitor.work_area);
         }
     }
 
@@ -993,7 +1033,7 @@ impl Daemon {
         }
         if self.loaded.config.general.borders {
             self.windows
-                .set_border(found.id, Some(self.loaded.config.general.border_inactive));
+                .set_border(found.id, Some(self.loaded.config.border_inactive()));
         }
         let desktop = vd::desktop_of(found.id.0).unwrap_or_else(|| self.desktops.current_id());
         let options = ManageOptions {
@@ -1311,7 +1351,6 @@ impl Daemon {
                 logging::set_enabled(!logging::enabled());
                 self.tray.set_logging(logging::enabled());
             }
-            TrayEvent::Reload => self.reload(),
             // If the config file couldn't be created, open its folder instead.
             TrayEvent::OpenConfig => {
                 if let Err(e) = tile_config::create_if_missing(&self.config_path) {
@@ -1563,10 +1602,12 @@ impl Daemon {
             return;
         }
         if let Some(old) = self.bordered {
-            self.windows.set_border(old, Some(general.border_inactive));
+            self.windows
+                .set_border(old, Some(self.loaded.config.border_inactive()));
         }
         if let Some(new) = focused {
-            self.windows.set_border(new, Some(general.border_active));
+            self.windows
+                .set_border(new, Some(self.loaded.config.border_active()));
         }
         self.bordered = focused;
         self.heal_at = Some(Instant::now() + HEAL_DELAY);
@@ -1586,9 +1627,9 @@ impl Daemon {
                 continue;
             }
             let want = Some(if Some(id) == focused {
-                general.border_active
+                self.loaded.config.border_active()
             } else {
-                general.border_inactive
+                self.loaded.config.border_inactive()
             });
             // DWM doesn't report border colors on current Windows builds (E_INVALIDARG), so
             // when it can't say, just re-assert ours: a no-op when unchanged.
@@ -1600,7 +1641,9 @@ impl Daemon {
 
     fn repaint_borders(&mut self) {
         let general = &self.loaded.config.general;
-        let color = general.borders.then_some(general.border_inactive);
+        let color = general
+            .borders
+            .then_some(self.loaded.config.border_inactive());
         for id in self.desktops.managed() {
             self.windows.set_border(id, color);
         }

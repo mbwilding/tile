@@ -111,5 +111,6 @@ holds the launch count per app and the 20 most recent. Delete the file to forget
 ## Appearance
 
 Size, position of the search box, font, colours, corners and opacity are all in the
-[`launcher` section](configuration.md#launcher) of the config. Sizes are in pixels at 100%
+[`launcher` section](configuration.md#launcher) of the config. The font, corners and colours
+follow the shared [`theme`](configuration.md#theme) unless set there. Sizes are in pixels at 100%
 scaling and grow with the monitor's scaling. Changes apply the next time it opens.

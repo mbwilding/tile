@@ -6,7 +6,8 @@ you want to change. On first run it creates `config.yml` holding just `tray`, th
 switches, which Tile saves there whenever you change them. Add a section and key to change
 anything else; the [default config](#the-default-config) below lists them all to copy from. Saved changes apply immediately,
 and `tilectl check [file]` reports what is wrong with a config. A bad config is not applied; the
-previous one is kept.
+previous one is kept, and the tray icon turns red until the file is fixed (see
+[the tray](windows-integration.md#the-tray)).
 
 Whole configs to start from are in [`examples/`](../examples): `default.yml` is the defaults
 written out in full, every bind included (with `default_binds: false`), and `mbwilding.yml` is
@@ -38,12 +39,30 @@ or contains `: ` or ` #`, and around numbers meant as text (`"2"`).
 | `independent_workspaces` | `true` | Every monitor has workspaces of its own, so `workspace 2` is workspace 2 on the monitor you are on and never moves focus to another monitor. `false` syncs the monitors: switching workspace switches them all together. See [layouts](layouts.md#workspaces-and-monitors). |
 | `layout` | `master` | Layout of new workspaces: `dwindle`, `master`, `monocle`, `scrolling` or `even`. New workspaces on a portrait monitor start with `even` instead. See [layouts](layouts.md). |
 | `borders` | `true` | Colour the window border to show focus (Windows 11). |
-| `border_active` | `"#89b4fa"` | Border colour of the focused window. |
-| `border_inactive` | `"#45475a"` | Border colour of every other tiled window. |
+| `border_active` | `theme.accent` | Border colour of the focused window. |
+| `border_inactive` | `theme.inactive` | Border colour of every other tiled window. |
 | `focus_new_windows` | `true` | Focus a window when it opens. |
 | `decorations` | `false` | Keep title bars on tiled windows. Floating windows always keep theirs; a rule can override this per app. |
 | `override_win_l` | `true` | Take over Win+L so it can be bound. See [Windows integration](windows-integration.md). |
 | `disable_click_to_do` | `true` | Switch off Click to Do, whose glow shows whenever Win is held (Copilot+ PCs). |
+
+### `theme`
+
+The font, corners and colours shared by everything Tile draws: the focus borders, the
+[launcher](launcher.md) and the [workspace indicator](#workspace_indicator). Change them here to
+restyle everything at once. Each of those sections has its own keys for the same things, unset
+by default; set one there to override the theme for just that part.
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `font` | `Segoe UI` | Font family. |
+| `corners` | `round` | Window corners: `round`, `small` or `square` (Windows 11). |
+| `background` | `"#1e1e2e"` | The launcher's window. |
+| `foreground` | `"#cdd6f4"` | Text. |
+| `dimmed` | `"#7f849c"` | Secondary text: the launcher's app ids and placeholder. |
+| `accent` | `"#89b4fa"` | The focused window's border, the launcher's outline, caret and selected row, and the workspace indicator. |
+| `accent_foreground` | `"#1e1e2e"` | Text on `accent`: the launcher's selected row and the workspace number. |
+| `inactive` | `"#45475a"` | The border of tiled windows without focus. |
 
 ### `tray`
 
@@ -54,7 +73,7 @@ startup, so you rarely need to edit them.
 | --- | --- | --- |
 | `tile` | `true` | The window manager is on (the tray's Tile item). |
 | `remap` | `false` | The key remapper is on (the tray's Remap item). Off until switched on. |
-| `logging` | `false` | Log to the log file (the tray's Logging item). |
+| `logging` | `false` | Log to the log file (the tray's Log item). |
 
 These are separate from `general.tiling` and `general.remap`, which switch the features off
 entirely: a feature runs only when both its `general` setting and its tray switch are on.
@@ -104,19 +123,41 @@ The app launcher, opened by the `launcher` dispatcher. See [launcher](launcher.m
 | `ignore_mouse` | `false` | The mouse doesn't select or launch. |
 | `pinned` | `[]` | App names or ids listed first, in this order, before anything is typed. |
 | `hide` | `[]` | Regexes (case-insensitive) on the app name or id; matching apps are never listed. |
-| `font` | `Segoe UI` | Font family. |
+| `font` | `theme.font` | Font family. |
 | `font_size` | `11` | Font size in points. |
-| `corners` | `round` | Window corners: `round`, `small` or `square` (Windows 11). |
+| `corners` | `theme.corners` | Window corners: `round`, `small` or `square` (Windows 11). |
 | `opacity` | `1.0` | How opaque the whole window is, from `0.1` to `1.0`. |
-| `background` | `"#1e1e2e"` | Window colour. |
-| `border` | `"#89b4fa"` | The window's outline (Windows 11). |
-| `foreground` | `"#cdd6f4"` | Text colour. |
-| `dimmed` | `"#7f849c"` | The app id line and the placeholder. |
-| `selected` | `"#89b4fa"` | The selected row. |
-| `selected_foreground` | `"#1e1e2e"` | Text on the selected row. |
+| `background` | `theme.background` | Window colour. |
+| `border` | `theme.accent` | The window's outline (Windows 11). |
+| `foreground` | `theme.foreground` | Text colour. |
+| `dimmed` | `theme.dimmed` | The app id line and the placeholder. |
+| `selected` | `theme.accent` | The selected row and the caret. |
+| `selected_foreground` | `theme.accent_foreground` | Text on the selected row. |
 | `placeholder` | `""` | Shown in the empty search box; `{prefix}` becomes `command_prefix`. Empty shows `Search apps or equations, ! for commands` with the real prefix, leaving out the calculator or commands when they are off. |
 | `calculator` | `true` | Show the value of a search that reads as a calculation first; Enter copies it. See [calculator](launcher.md#calculator). |
 | `command_prefix` | `"!"` | Typing this first runs a command line or a Tile dispatcher instead of searching apps. `""` switches it off. See [commands](launcher.md#commands). |
+
+### `workspace_indicator`
+
+A small square showing the workspace number that flashes up on the focused monitor when a
+`workspace` or `movetoworkspace` dispatcher runs (even onto the workspace you are already on),
+then fades out. It never takes focus and clicks go through it.
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `enabled` | `true` | Show it. |
+| `position` | `bottom_right` | Where it sits on the monitor's work area: `center`, `top`, `top_left`, `top_right`, `bottom`, `bottom_left`, `bottom_right`, `left` or `right`. |
+| `gap` | `48` | Pixels from the edges it sits against, at 100% scaling. Unused for `center`. |
+| `size` | `96` | Width and height in pixels at 100% scaling. It widens for a number that doesn't fit. |
+| `duration_ms` | `400` | How long it stays fully shown. |
+| `fade_ms` | `250` | How long it then takes to fade out. `0` hides it at once. |
+| `font` | `theme.font` | Font family of the number. |
+| `font_size` | `36` | Font size in points. |
+| `bold` | `true` | Bold number. |
+| `corners` | `theme.corners` | Corners: `round`, `small` or `square` (Windows 11). |
+| `opacity` | `0.95` | How opaque it is when fully shown, from `0.1` to `1.0`. |
+| `background` | `theme.accent` | Its colour. |
+| `foreground` | `theme.accent_foreground` | The number's colour. |
 
 ### `binds`
 
@@ -163,12 +204,23 @@ general:
   independent_workspaces: true  # each monitor has its own workspaces; false syncs them
   layout: master                # dwindle | master | monocle | scrolling | even
   borders: true                 # colour the window border to show focus (Windows 11)
-  border_active: "#89b4fa"
-  border_inactive: "#45475a"
+  # border_active: "#89b4fa"    # unset follows theme.accent
+  # border_inactive: "#45475a"  # unset follows theme.inactive
   focus_new_windows: true
   decorations: false            # keep title bars on tiled windows
   override_win_l: true          # take over Win+L
   disable_click_to_do: true     # switch off Click to Do
+
+# Shared by the borders, the launcher and the workspace indicator, unless they set their own.
+theme:
+  font: Segoe UI
+  corners: round                # round | small | square
+  background: "#1e1e2e"
+  foreground: "#cdd6f4"
+  dimmed: "#7f849c"             # secondary text
+  accent: "#89b4fa"             # focus border, launcher outline and selection, workspace indicator
+  accent_foreground: "#1e1e2e"  # text on accent
+  inactive: "#45475a"           # border of unfocused windows
 
 # The tray's switches. Tile saves these when you change them in the tray.
 tray:
@@ -215,19 +267,30 @@ launcher:
   ignore_mouse: false
   pinned: []                    # names or ids listed first
   hide: []                      # regexes on name or id never listed
-  font: Segoe UI
+  # font: Segoe UI              # unset follows theme.font
   font_size: 11                 # points
-  corners: round                # round | small | square
+  # corners: round              # unset follows theme.corners
   opacity: 1.0                  # 0.1 to 1.0
-  background: "#1e1e2e"
-  border: "#89b4fa"
-  foreground: "#cdd6f4"
-  dimmed: "#7f849c"             # app ids and the placeholder
-  selected: "#89b4fa"
-  selected_foreground: "#1e1e2e"
+  # background, border, foreground, dimmed, selected and selected_foreground
+  # are unset and follow theme; set any of them to override it here
   placeholder: ""                # "" for "Search apps or equations, ! for commands"; {prefix} is the prefix
   calculator: true              # `12 * 3` shows = 36; Enter copies it
   command_prefix: "!"           # run a command line or dispatcher; "" for off
+
+workspace_indicator:
+  enabled: true                 # flash the workspace number when switching
+  position: bottom_right        # center | top | top_left | top_right | bottom | bottom_left | bottom_right | left | right
+  gap: 48                       # px from the edges, unused for center
+  size: 96                      # px at 100% scaling
+  duration_ms: 400              # fully shown
+  fade_ms: 250                  # then fades out
+  # font: Segoe UI              # unset follows theme.font
+  font_size: 36                 # points
+  bold: true
+  # corners: round              # unset follows theme.corners
+  opacity: 0.95                 # 0.1 to 1.0
+  # background: "#89b4fa"       # unset follows theme.accent
+  # foreground: "#1e1e2e"       # unset follows theme.accent_foreground
 
 binds: {}                       # added to the default binds; see keybinds.md
 
