@@ -233,7 +233,7 @@ fn tray_pairs(tray: &Tray) -> [(&'static str, bool); 4] {
         ("tile", tray.tile),
         ("remap", tray.remap),
         ("shell", tray.shell),
-        ("logging", tray.logging),
+        ("log", tray.log),
     ]
 }
 

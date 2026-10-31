@@ -34,7 +34,7 @@ tray:
   tile: true # window manager on
   remap: false # key remapper on (starts off)
   shell: false # Tile is the shell: hosts tray icons, keeps the launcher bound
-  logging: false
+  log: false
 
 # Tile as the Windows shell; see shell.md.
 shell:

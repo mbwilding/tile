@@ -47,7 +47,7 @@ impl io::Write for LazyFile {
 /// Sets up logging to `name`. `filter` (from `--log`) also switches logging on.
 pub fn init(name: &str, filter: Option<&str>) -> WorkerGuard {
     let enabled =
-        filter.is_some() || std::env::var_os("RUST_LOG").is_some() || settings::load().logging;
+        filter.is_some() || std::env::var_os("RUST_LOG").is_some() || settings::load().log;
     ENABLED.store(enabled, Ordering::Relaxed);
     let (file, guard) = tracing_appender::non_blocking(LazyFile {
         name: name.to_string(),
@@ -81,5 +81,5 @@ pub fn set_enabled(on: bool) {
     if on {
         tracing::info!("logging on");
     }
-    settings::update(|s| s.logging = on);
+    settings::update(|s| s.log = on);
 }

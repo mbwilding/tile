@@ -6,7 +6,7 @@ tray:
   tile: true
   remap: false
   shell: true
-  logging: false
+  log: false
 
 theme:
   font: NeoSpleen

@@ -75,7 +75,7 @@ startup, so you rarely need to edit them.
 | `tile` | `true` | The window manager is on (the tray's Tile item). |
 | `remap` | `false` | The key remapper is on (the tray's Remap item). Off until switched on. |
 | `shell` | `false` | Tile is the shell (the tray's Shell item): it hosts the notification area when no taskbar is running, keeps the launcher bound (to `Win+R`, or `Win+D` if that is taken, when you haven't bound it) and shows the tray icons in a row of their own at its top. See [shell mode](shell.md). Turning it on also makes Tile your sign-in shell in place of Explorer from the next sign-in, and Tile keeps that in step with the file: a config with `shell: true` sets it up the first time Tile runs, and editing it back puts Explorer back. Tile started with `--shell`, which that sign-in shell uses, is the shell whatever this says. |
-| `logging` | `false` | Log to the log file (the tray's Log item). |
+| `log` | `false` | Log to the log file (the tray's Log item). |
 
 These are separate from `general.tiling` and `general.remap`, which switch the features off
 entirely: a feature runs only when both its `general` setting and its tray switch are on.
@@ -242,7 +242,7 @@ tray:
   tile: true                    # window manager on
   remap: false                  # key remapper on (starts off)
   shell: false                  # Tile is the shell: hosts tray icons, keeps the launcher bound
-  logging: false
+  log: false
 
 # Tile as the Windows shell; see shell.md.
 shell:

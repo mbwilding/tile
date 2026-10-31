@@ -324,7 +324,7 @@ pub struct Tray {
     /// Key remapping is on. Off until switched on.
     pub remap: bool,
     /// Logging to the log file is on.
-    pub logging: bool,
+    pub log: bool,
     /// Tile is the shell: it hosts the notification area when no taskbar is running, keeps the
     /// launcher bound and lists the tray icons in it.
     pub shell: bool,
@@ -335,7 +335,7 @@ impl Default for Tray {
         Self {
             tile: true,
             remap: false,
-            logging: false,
+            log: false,
             shell: false,
         }
     }
