@@ -812,7 +812,8 @@ impl State {
             | Command::ExpelWindow
             | Command::CenterColumn => self.layout_specific(command),
             // Handled by the daemon.
-            Command::Desktop(_)
+            Command::FocusOrExec(_)
+            | Command::Desktop(_)
             | Command::MoveToDesktop(_)
             | Command::Pin
             | Command::Lock

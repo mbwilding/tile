@@ -1,7 +1,7 @@
 # Key remapping
 
 Tile has a [keyd](https://github.com/rvaiya/keyd)-style remapper built in: layers, home-row mods
-and tap/hold keys. Switch it on and off with `general.remap` or the tray's Key item (it starts
+and tap/hold keys. Switch it on and off with `general.remap` or the tray's Remap item (it starts
 off). The remapper has its own keyboard hook in front of the keybinds, so binds see keys as
 remapped.
 

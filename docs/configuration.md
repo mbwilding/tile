@@ -11,11 +11,10 @@ previous one is kept.
 These sections **replace** the built-in set entirely when you write them, so copy the defaults
 from the end of this page as a starting point:
 
-- `binds`
-- `hotkeys`
 - `rules`
 - `remap.layers`
 
+`binds` add to the [default binds](keybinds.md#default-keys) instead (see [`binds`](#binds)).
 Every other section merges: a key you leave out keeps its default. Unknown keys are an error.
 
 YAML needs quotes around a key or value that starts with punctuation (`"#89b4fa"`, `"/"`, `"!"`)
@@ -28,6 +27,7 @@ or contains `: ` or ` #`, and around numbers meant as text (`"2"`).
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `tiling` | `true` | Manage windows. `false` leaves them alone and gives Win+L back; turning it on again manages the open windows. |
+| `default_binds` | `true` | Start from the [default binds](keybinds.md#default-keys), which `binds` add to. `false` leaves only your own `binds`. |
 | `remap` | `true` | Run the key remapper with the `remap` layers. |
 | `gaps_in` | `10` | Pixels between neighbouring tiled windows. |
 | `gaps_out` | `10` | Pixels between tiled windows and the monitor edge. |
@@ -49,8 +49,7 @@ startup, so you rarely need to edit them.
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `tile` | `false` | The window manager is on (the tray's Tile item). Off until switched on. |
-| `key` | `false` | The key remapper is on (the tray's Key item). Off until switched on. |
-| `hotkey` | `true` | The `hotkeys` are on (the tray's Hotkey item). |
+| `remap` | `false` | The key remapper is on (the tray's Remap item). Off until switched on. |
 | `logging` | `false` | Log to the log file (the tray's Logging item). |
 
 These are separate from `general.tiling` and `general.remap`, which switch the features off
@@ -86,31 +85,20 @@ entirely: a feature runs only when both its `general` setting and its tray switc
 
 ### `binds`
 
-Window manager keybinds, as `<keys>: <dispatcher>`. They only run while Tile is on (the tray's
-Tile item). See [keybinds](keybinds.md) for the key names and every dispatcher.
+Keybinds, as `<keys>: <dispatcher>`. They add to the [default binds](keybinds.md#default-keys):
+a key that is already bound gets your dispatcher instead, and an empty value (`""` or `~`)
+unbinds it. Set `general.default_binds: false` to start from nothing.
 
-### `hotkeys`
+```yaml
+binds:
+  super+t: exec wtd.exe -w new          # replaces the default Win+T
+  super+e: focusorexec code.cmd         # focus VS Code, or start it
+  super+z: ~                            # unbind the default Win+Z
+```
 
-Launch, focus and close keys. They work with tiling off, and are switched on and off together by
-the tray's Hotkey item (which starts on). An entry is one of:
-
-| Form | Meaning |
-| --- | --- |
-| `super+b: chrome.exe` | Start the program, a new instance every time. |
-| `super+b: { run: chrome.exe, focus: true }` | Focus a window of that program if there is one, otherwise start it. The program is the command's file name. |
-| `super+e: { run: code.cmd, exe: Code.exe, focus: true }` | As above, but look for windows of the process `exe`. Use it when the process has another name than the command. |
-| `super+t: { run: [wt.exe, notepad.exe] }` | Start each command in turn without waiting for any to finish, here Windows Terminal and Notepad. |
-| `super+q: { close: true }` | Close the focused window, like Alt+F4. |
-
-A command line can take arguments: `super+b: chrome.exe --new-window` opens a new Chrome window
-every time. Quote one that starts with a quote:
-`run: '"C:\Program Files\App\app.exe" -n'`. Commands start through `start`, so a program on
-`PATH` (app execution aliases like `wt.exe` included) or registered under App Paths (like
-`chrome.exe`) needs no path. `focus` is off unless set. With it on and no `exe`, the window to
-focus is the first command's program; when one is focused, none of the commands run.
-
-Pressing a launch key again moves on to the next window of that program on the current virtual
-desktop. A key bound in both `binds` and `hotkeys` runs the `binds` entry.
+Launching, closing, locking, desktops, `reload`, `togglepause` and `exit` work even with tiling
+off or paused; the rest only run while Tile is on (the tray's Tile item). See
+[keybinds](keybinds.md) for the key names and every dispatcher.
 
 ### `rules`
 
@@ -133,6 +121,7 @@ as it is. A test checks that this block lists every setting at its real default.
 ---
 general:
   tiling: true                  # manage windows; false leaves them alone
+  default_binds: true           # start from the default binds; false leaves only yours
   remap: true                   # remap keys with the remap layers
   gaps_in: 10                   # px between neighbouring windows
   gaps_out: 10                  # px between windows and the monitor edge
@@ -149,8 +138,7 @@ general:
 # The tray's switches. Tile saves these when you change them in the tray.
 tray:
   tile: false                   # window manager on (starts off)
-  key: false                    # key remapper on (starts off)
-  hotkey: true                  # the hotkeys below
+  remap: false                  # key remapper on (starts off)
   logging: false
 
 cursor:
@@ -176,80 +164,11 @@ scrolling:
   proportion_presets: [0.25, 0.333, 0.5, 1.0]   # widths `cycleproportion` steps through
   center_focused: on_overflow   # always | on_overflow | never
 
-# Launch, focus and close keys. Work with tiling off; the tray's Hotkey item switches them.
-hotkeys:
-  super+b: chrome.exe --new-window
-  super+t: wt.exe -w new
-  super+q: { close: true }
-
 remap:
   modifier_guard: true          # a layer's lone Alt or Win doesn't open a menu or Start
   layers: {}                    # none; see key-remapping.md
 
-binds:
-  super+1: workspace 1
-  super+2: workspace 2
-  super+3: workspace 3
-  super+4: workspace 4
-  super+5: workspace 5
-  super+6: workspace 6
-  super+7: workspace 7
-  super+8: workspace 8
-  super+9: workspace 9
-  super+shift+1: movetoworkspace 1
-  super+shift+2: movetoworkspace 2
-  super+shift+3: movetoworkspace 3
-  super+shift+4: movetoworkspace 4
-  super+shift+5: movetoworkspace 5
-  super+shift+6: movetoworkspace 6
-  super+shift+7: movetoworkspace 7
-  super+shift+8: movetoworkspace 8
-  super+shift+9: movetoworkspace 9
-  super+left: movefocus l
-  super+right: movefocus r
-  super+up: movefocus u
-  super+down: movefocus d
-  super+h: movefocus l
-  super+j: movefocus d
-  super+k: movefocus u
-  super+l: movefocus r  # needs override_win_l (the default)
-  super+shift+left: movewindow l
-  super+shift+right: movewindow r
-  super+shift+up: movewindow u
-  super+shift+down: movewindow d
-  super+shift+h: movewindow l
-  super+shift+j: movewindow d
-  super+shift+k: movewindow u
-  super+shift+l: movewindow r
-  super+alt+left: resizeactive -40 0
-  super+alt+right: resizeactive 40 0
-  super+alt+up: resizeactive 0 -40
-  super+alt+down: resizeactive 0 40
-  super+alt+h: resizeactive -40 0
-  super+alt+j: resizeactive 0 40
-  super+alt+k: resizeactive 0 -40
-  super+alt+l: resizeactive 40 0
-  super+ctrl+shift+left: movetodesktop prev
-  super+ctrl+shift+right: movetodesktop next
-  super+ctrl+p: pin
-  super+comma: focusmonitor l
-  super+period: focusmonitor r
-  super+enter: swapwithmaster
-  super+f: togglefloating
-  super+o: fullscreen
-  super+space: cyclelayout
-  super+n: cyclenext
-  super+z: lock
-  super+s: togglesplit
-  super+r: cycleproportion
-  super+c: centercolumn
-  super+bracketleft: consumewindow l
-  super+bracketright: consumewindow r
-  super+backslash: expelwindow
-  super+shift+r: reload
-  super+shift+p: togglepause
-  super+shift+e: exit
-
+binds: {}                       # added to the default binds; see keybinds.md
 
 rules:
   # Standard dialogs float.

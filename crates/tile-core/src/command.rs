@@ -8,6 +8,8 @@ use crate::{geometry::Direction, layout::LayoutKind};
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Command {
     Exec(String),
+    /// Focus a window of the command's program, or run the command if there is none.
+    FocusOrExec(String),
     KillActive,
     ToggleFloating,
     Fullscreen,
@@ -76,6 +78,23 @@ impl fmt::Display for DesktopTarget {
     }
 }
 
+impl Command {
+    /// Works with tiling off or paused, since it doesn't need the window manager.
+    pub const fn works_while_paused(&self) -> bool {
+        matches!(
+            self,
+            Self::Exec(_)
+                | Self::FocusOrExec(_)
+                | Self::KillActive
+                | Self::Desktop(_)
+                | Self::Lock
+                | Self::Reload
+                | Self::TogglePause
+                | Self::Exit
+        )
+    }
+}
+
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum ParseError {
     #[error("empty command")]
@@ -123,6 +142,10 @@ impl FromStr for Command {
         let n = name.as_str();
         Ok(match n {
             "exec" => Self::Exec(
+                rest.ok_or_else(|| ParseError::MissingArg(name.clone(), "a command line"))?
+                    .to_string(),
+            ),
+            "focusorexec" => Self::FocusOrExec(
                 rest.ok_or_else(|| ParseError::MissingArg(name.clone(), "a command line"))?
                     .to_string(),
             ),
@@ -195,6 +218,7 @@ impl fmt::Display for Command {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Exec(cmd) => write!(f, "exec {cmd}"),
+            Self::FocusOrExec(cmd) => write!(f, "focusorexec {cmd}"),
             Self::KillActive => f.write_str("killactive"),
             Self::ToggleFloating => f.write_str("togglefloating"),
             Self::Fullscreen => f.write_str("fullscreen"),
@@ -235,6 +259,7 @@ mod tests {
     fn parses_and_round_trips() {
         for input in [
             "exec wt.exe -p \"PowerShell\"",
+            "focusorexec code.cmd",
             "killactive",
             "movefocus l",
             "resizeactive -40 0",
