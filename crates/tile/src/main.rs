@@ -18,7 +18,7 @@ use tile_config::Loaded;
 #[derive(Parser)]
 #[command(version, about)]
 struct Args {
-    /// Config file to use instead of %APPDATA%\Tile\config.toml.
+    /// Config file to use instead of %APPDATA%\Tile\config.yml.
     #[arg(long, short)]
     config: Option<PathBuf>,
     /// Log filter, e.g. `info` or `tile=debug`; also switches logging on. `RUST_LOG` takes

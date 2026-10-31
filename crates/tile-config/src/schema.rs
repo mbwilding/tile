@@ -17,30 +17,29 @@ pub struct Config {
     pub master: Master,
     pub scrolling: Scrolling,
     pub remap: Remap,
-    /// `"super+shift+q" = "killactive"`.
+    /// `super+shift+q: killactive`.
     pub binds: BTreeMap<String, String>,
     pub rules: Vec<Rule>,
 }
 
-/// What a `[hotkeys]` entry does. They work independently of tiling, and are switched on and
+/// What a `hotkeys` entry does. They work independently of tiling, and are switched on and
 /// off together by the tray's Hotkey item.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Hotkey {
-    /// `"super+b" = "chrome.exe"`: focus a window of that program, or start it.
+    /// `super+b: chrome.exe`: start the program, a new instance every time.
     Run(String),
-    /// `{ run = "chrome.exe", exe = "chrome.exe" }`: start `run`, but focus a window of the
-    /// process `exe` instead if there is one. `{ run = "wt.exe", focus = false }` always starts
-    /// a new one.
+    /// `{ run: chrome.exe, focus: true }`: focus a window of the program instead if there is
+    /// one. `exe` names the process to look for when it isn't the program `run` starts.
     App {
         run: Run,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         exe: Option<String>,
-        /// Focus an existing window of the program rather than starting another. Default on.
-        #[serde(default = "yes", skip_serializing_if = "is_true")]
+        /// Focus an existing window of the program rather than starting another. Default off.
+        #[serde(default, skip_serializing_if = "is_false")]
         focus: bool,
     },
-    /// `{ close = true }`: close the focused window, like Alt+F4.
+    /// `{ close: true }`: close the focused window, like Alt+F4.
     Close { close: bool },
 }
 
@@ -77,8 +76,7 @@ impl Hotkey {
     /// else the program of the first command.
     pub fn exe(&self) -> Option<String> {
         match self {
-            Self::Run(_)
-            | Self::App {
+            Self::App {
                 exe: None,
                 focus: true,
                 ..
@@ -87,8 +85,10 @@ impl Hotkey {
                 .first()
                 .and_then(|c| Path::new(program(c)).file_name())
                 .map(|n| n.to_string_lossy().into_owned()),
-            Self::App { focus: false, .. } | Self::Close { .. } => None,
-            Self::App { exe, .. } => exe.clone(),
+            Self::App {
+                exe, focus: true, ..
+            } => exe.clone(),
+            Self::Run(_) | Self::App { .. } | Self::Close { .. } => None,
         }
     }
 }
@@ -102,37 +102,22 @@ pub fn program(command: &str) -> &str {
     }
 }
 
-fn yes() -> bool {
-    true
-}
-
-fn is_true(value: &bool) -> bool {
-    *value
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 fn default_hotkeys() -> BTreeMap<String, Hotkey> {
     BTreeMap::from([
         (
             "super+b".to_string(),
-            Hotkey::App {
-                run: Run::One("chrome.exe --new-window".into()),
-                exe: None,
-                focus: false,
-            },
+            Hotkey::Run("chrome.exe --new-window".into()),
         ),
-        (
-            "super+t".to_string(),
-            Hotkey::App {
-                run: Run::One("wt.exe -w new".into()),
-                exe: None,
-                focus: false,
-            },
-        ),
+        ("super+t".to_string(), Hotkey::Run("wt.exe -w new".into())),
         ("super+q".to_string(), Hotkey::Close { close: true }),
     ])
 }
 
-/// Keybinds used when the config has no `[binds]` table.
+/// Keybinds used when the config has no `binds` section.
 const DEFAULT_BINDS: &[(&str, &str)] = &[
     ("super+enter", "swapwithmaster"),
     ("super+f", "togglefloating"),
@@ -193,7 +178,7 @@ fn default_binds() -> BTreeMap<String, String> {
     binds
 }
 
-/// Window rules used when the config has no `[[rules]]`.
+/// Window rules used when the config has no `rules`.
 fn default_rules() -> Vec<Rule> {
     vec![
         // Standard dialogs.
@@ -256,9 +241,9 @@ impl Config {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct General {
-    /// Manage windows: layouts, `[binds]` and `[[rules]]`. Off, Tile leaves windows alone.
+    /// Manage windows: layouts, `binds` and `rules`. Off, Tile leaves windows alone.
     pub tiling: bool,
-    /// Remap keys with the `[remap]` layers.
+    /// Remap keys with the `remap` layers.
     pub remap: bool,
     /// Space between neighbouring tiled windows.
     pub gaps_in: i32,
@@ -310,7 +295,7 @@ pub struct Tray {
     pub tile: bool,
     /// Key remapping is on. Off until switched on.
     pub key: bool,
-    /// The `[hotkeys]` are on.
+    /// The `hotkeys` are on.
     pub hotkey: bool,
     /// Logging to the log file is on.
     pub logging: bool,
@@ -427,7 +412,7 @@ impl Default for Scrolling {
 
 /// Key remapping, keyd style. Each `layers` entry is a layer named as a keyd section header:
 /// `main`, `name`, `name:C` (a layer whose unbound keys get Control) or `a+b` (while both
-/// are active). Its table maps keys to actions, e.g. `capslock = "overload(nav, esc)"`.
+/// are active). It maps keys to actions, e.g. `capslock: overload(nav, esc)`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Remap {

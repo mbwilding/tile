@@ -5,22 +5,23 @@ and tap/hold keys. Switch it on and off with `general.remap` or the tray's Key i
 off). The remapper has its own keyboard hook in front of the keybinds, so binds see keys as
 remapped.
 
-`[remap.layers]` holds keyd's config as TOML: each table is a keyd section, named like keyd's
-section header (quoted when it has `:` or `+`), and maps keys to actions. There are no layers by
+`remap.layers` holds keyd's config as YAML: each entry is a keyd section, named like keyd's
+section header (quoted when it has `:`), and maps keys to actions. Quote keys and actions that
+start with punctuation, like `";"` or `"!"`. There are no layers by
 default, so the remapper changes nothing until you add some.
 
-```toml
-[remap.layers.main]
-capslock = "overload(nav, esc)"   # tap for Escape, hold for the nav layer
-a = "overloadt(control, a, 200)"  # Control once held for 200ms
-rightalt = "layer(nav)"
-
-[remap.layers."nav:C"]            # keys nav doesn't bind get Control while it's held
-h = "left"
-l = "right"
-
-[remap.layers."nav+shift"]        # while nav and shift are both active
-h = "C-left"
+```yaml
+remap:
+  layers:
+    main:
+      capslock: overload(nav, esc)    # tap for Escape, hold for the nav layer
+      a: overloadt(control, a, 200)   # Control once held for 200ms
+      rightalt: layer(nav)
+    "nav:C":                          # keys nav doesn't bind get Control while it's held
+      h: left
+      l: right
+    nav+shift:                        # while nav and shift are both active
+      h: C-left
 ```
 
 | Action | Effect |

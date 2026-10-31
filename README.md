@@ -22,7 +22,7 @@ menu is suppressed), so no separate hotkey program is needed.
 - Optional title bar removal for tiled windows, with per-app overrides
 - Key remapping in keyd's terms: layers, modifier layers, `overload()`, `overloadt()` and key
   sequences
-- TOML config, applied live on save, with window rules
+- YAML config, applied live on save, with window rules
 - `tilectl`: dispatch commands, query state as JSON, subscribe to events, check the config,
   install/uninstall
 - Tray icon with switches for the window manager (Tile), the key remapper (Key) and the app
@@ -58,7 +58,7 @@ without a UAC prompt at sign-in:
 - A scheduled task starts Tile elevated when you sign in. It runs on battery, is never stopped
   for running too long and runs at normal priority.
 - A launcher (`tile.exe --launcher`) starts with your normal rights from your `Run` key. Programs
-  Tile starts, from `exec` binds, `[hotkeys]` or the tray, go through it, so they don't run as
+  Tile starts, from `exec` binds, `hotkeys` or the tray, go through it, so they don't run as
   administrator.
 - `C:\Program Files\Tile` goes on your user `PATH`, for `tilectl` in terminals started after your
   next sign-in.
@@ -75,7 +75,7 @@ To try a build without installing:
 
 ```powershell
 cargo run --release                  # runs tile.exe
-.\target\release\tile.exe -c my.toml # with another config file
+.\target\release\tile.exe -c my.yml  # with another config file
 ```
 
 Only one Tile runs at a time. Release builds have no console, so stop one with `Win+Shift+E`, the
@@ -85,9 +85,9 @@ terminal can leave windows hidden and the pointer blank until Tile next starts (
 
 ## Configuration
 
-Tile runs on its built-in defaults. On first run it creates `%APPDATA%\Tile\config.toml` holding
+Tile runs on its built-in defaults. On first run it creates `%APPDATA%\Tile\config.yml` holding
 only the tray's switches (Tile, Key, Hotkey, logging), which it saves there as you change them.
-Add a `[section]` and key to change anything else; saved changes apply immediately. [Configuration](docs/configuration.md) has every setting and the whole default
+Add a section and key to change anything else; saved changes apply immediately. [Configuration](docs/configuration.md) has every setting and the whole default
 config to copy and paste.
 
 ## Documentation
@@ -95,7 +95,7 @@ config to copy and paste.
 | Page | Contents |
 | --- | --- |
 | [Configuration](docs/configuration.md) | Every setting, and the default config to copy |
-| [Keybinds](docs/keybinds.md) | Default keys, key names, every dispatcher, `[hotkeys]` |
+| [Keybinds](docs/keybinds.md) | Default keys, key names, every dispatcher, `hotkeys` |
 | [Layouts](docs/layouts.md) | The five layouts, portrait and multi-monitor behaviour |
 | [Window rules](docs/window-rules.md) | Float, ignore or place windows by program, class or title |
 | [Key remapping](docs/key-remapping.md) | keyd-style layers, overloads and their limits |

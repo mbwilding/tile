@@ -2,9 +2,9 @@
 
 Keys come from two config tables:
 
-- `[binds]` runs a window manager dispatcher. These only work while Tile is on (the tray's Tile
+- `binds` runs a window manager dispatcher. These only work while Tile is on (the tray's Tile
   item) and are paused with it.
-- `[hotkeys]` launches, focuses or closes. These work with tiling off, and are switched together
+- `hotkeys` launches, focuses or closes. These work with tiling off, and are switched together
   by the tray's Hotkey item. See [configuration](configuration.md#hotkeys).
 
 Bound keys take priority over Windows' own `Win+` shortcuts; unbound ones still reach Windows.
@@ -56,7 +56,7 @@ binds on it are skipped.
 
 ## Dispatchers
 
-A `[binds]` value is `<dispatcher> [arguments]`. `tilectl dispatch` runs the same ones.
+A `binds` value is `<dispatcher> [arguments]`. `tilectl dispatch` runs the same ones.
 
 | Dispatcher | Action |
 | --- | --- |

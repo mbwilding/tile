@@ -1,4 +1,4 @@
-//! TOML configuration for Tile: schema, keybind parsing, window rules, key remapping and hot
+//! YAML configuration for Tile: schema, keybind parsing, window rules, key remapping and hot
 //! reload.
 
 mod keys;
@@ -26,7 +26,7 @@ pub enum ConfigError {
     #[error("failed to read {0}: {1}")]
     Io(PathBuf, io::Error),
     #[error("invalid config: {0}")]
-    Toml(#[from] toml::de::Error),
+    Yaml(#[from] serde_yaml_ng::Error),
     #[error("bind `{0}`: {1}")]
     Bind(String, String),
     #[error("rule #{0}: {1}")]
@@ -42,13 +42,18 @@ pub struct Loaded {
     pub binds: Vec<(Keybind, Command)>,
     pub hotkeys: Vec<(Keybind, Hotkey)>,
     pub rules: Rules,
-    /// `[remap]`, compiled for the remapping engine.
+    /// `remap`, compiled for the remapping engine.
     pub remap: tile_remap::Config,
 }
 
 impl Loaded {
     pub fn parse(text: &str) -> Result<Self, ConfigError> {
-        Self::from_config(toml::from_str(text)?)
+        // An empty document (or one of only comments) is YAML's null, not an empty map.
+        let value: serde_yaml_ng::Value = serde_yaml_ng::from_str(text)?;
+        if value.is_null() {
+            return Self::from_config(Config::default());
+        }
+        Self::from_config(serde_yaml_ng::from_str(text)?)
     }
 
     /// The built-in defaults, used when no config file exists.
@@ -111,28 +116,38 @@ impl Loaded {
     }
 }
 
-/// `%APPDATA%\Tile\config.toml`. Created on first run with only the tray switches in it (see
-/// [`create_if_missing`]); everything else comes from the built-in defaults.
+/// `%APPDATA%\Tile\config.yml`, or `config.yaml` when only that exists. Created on first run
+/// with only the tray switches in it (see [`create_if_missing`]); everything else comes from the
+/// built-in defaults.
 pub fn default_path() -> PathBuf {
-    dirs::config_dir()
+    let dir = dirs::config_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join("Tile")
-        .join("config.toml")
+        .join("Tile");
+    let yml = dir.join("config.yml");
+    let yaml = dir.join("config.yaml");
+    if !yml.exists() && yaml.exists() {
+        yaml
+    } else {
+        yml
+    }
 }
 
 const NEW_FILE_HEADER: &str = "\
+---
 # Tile config. Only the tray switches are saved here; everything else uses the built-in
-# defaults. To change one, add its [section] and key. docs/configuration.md lists them all,
+# defaults. To change one, add its section and key. docs/configuration.md lists them all,
 # with the whole default config to copy. Saved changes are applied live.
 
 ";
 
-/// Sets `key = value` for each pair in `[section]` of `text`, keeping everything else (comments,
-/// other keys, order). Missing keys are added, and so is the section.
+/// Sets `key: value` for each pair in the top-level `section:` of `text`, keeping everything
+/// else (comments, other keys, order). Missing keys are added, and so is the section.
 fn set_bools(text: &str, section: &str, pairs: &[(&str, bool)]) -> String {
-    let header = format!("[{section}]");
+    let header = format!("{section}:");
     let mut lines: Vec<String> = text.lines().map(str::to_owned).collect();
-    let mut start = lines.iter().position(|l| l.trim() == header);
+    let mut start = lines
+        .iter()
+        .position(|l| l.split('#').next().unwrap_or("").trim_end() == header);
     if start.is_none() {
         if lines.last().is_some_and(|l| !l.trim().is_empty()) {
             lines.push(String::new());
@@ -141,24 +156,31 @@ fn set_bools(text: &str, section: &str, pairs: &[(&str, bool)]) -> String {
         start = Some(lines.len() - 1);
     }
     let start = start.unwrap_or(0);
+    let top_level = |l: &str| !l.is_empty() && !l.starts_with([' ', '\t', '#']);
     for (key, value) in pairs {
         let end = lines[start + 1..]
             .iter()
-            .position(|l| l.trim_start().starts_with('['))
+            .position(|l| top_level(l))
             .map_or(lines.len(), |i| start + 1 + i);
+        let indent = (start + 1..end)
+            .map(|i| &lines[i])
+            .find(|l| !l.trim().is_empty() && !l.trim_start().starts_with('#'))
+            .map_or("  ".to_owned(), |l| {
+                l[..l.len() - l.trim_start().len()].to_owned()
+            });
         let existing = (start + 1..end).find(|&i| {
             lines[i]
                 .trim_start()
                 .strip_prefix(key)
-                .is_some_and(|rest| rest.trim_start().starts_with('='))
+                .is_some_and(|rest| rest.starts_with(':'))
         });
         match existing {
             Some(i) => {
                 // Keep a trailing comment.
-                let comment = lines[i].find('#').map(|c| lines[i][c..].to_owned());
+                let comment = lines[i].find(" #").map(|c| lines[i][c + 1..].to_owned());
                 lines[i] = match comment {
-                    Some(c) => format!("{key} = {value}  {c}"),
-                    None => format!("{key} = {value}"),
+                    Some(c) => format!("{indent}{key}: {value}  {c}"),
+                    None => format!("{indent}{key}: {value}"),
                 };
             }
             None => {
@@ -166,7 +188,7 @@ fn set_bools(text: &str, section: &str, pairs: &[(&str, bool)]) -> String {
                     .rev()
                     .find(|&i| !lines[i].trim().is_empty())
                     .map_or(start + 1, |i| i + 1);
-                lines.insert(at, format!("{key} = {value}"));
+                lines.insert(at, format!("{indent}{key}: {value}"));
             }
         }
     }
@@ -206,7 +228,7 @@ pub fn create_if_missing(path: &Path) -> io::Result<()> {
     }
 }
 
-/// Saves the tray switches into `[tray]` of the config file, leaving the rest of it as it is.
+/// Saves the tray switches into `tray:` of the config file, leaving the rest of it as it is.
 pub fn write_tray(path: &Path, tray: &Tray) -> io::Result<()> {
     let text = match fs::read_to_string(path) {
         Ok(text) => text,
@@ -232,23 +254,24 @@ mod tests {
 
     #[test]
     fn empty_config_uses_defaults() {
-        let loaded = Loaded::parse("").unwrap();
-        assert_eq!(loaded.config, Config::default());
+        for text in ["", "# only a comment\n"] {
+            assert_eq!(Loaded::parse(text).unwrap().config, Config::default());
+        }
     }
 
     #[test]
     fn missing_file_uses_defaults() {
-        let loaded = Loaded::load_or_default(Path::new("does/not/exist.toml")).unwrap();
+        let loaded = Loaded::load_or_default(Path::new("does/not/exist.yml")).unwrap();
         assert_eq!(loaded.config, Config::default());
     }
 
     #[test]
     fn new_file_holds_only_the_tray_and_runs_on_defaults() {
         let dir = std::env::temp_dir().join(format!("tile-config-{}", std::process::id()));
-        let path = dir.join("config.toml");
+        let path = dir.join("config.yml");
         create_if_missing(&path).unwrap();
         let text = fs::read_to_string(&path).unwrap();
-        assert!(text.contains("[tray]") && text.contains("hotkey = true"));
+        assert!(text.contains("tray:") && text.contains("  hotkey: true"));
         assert_eq!(Loaded::parse(&text).unwrap().config, Config::default());
         let tray = Tray {
             tile: true,
@@ -261,29 +284,28 @@ mod tests {
 
     #[test]
     fn set_bools_edits_in_place() {
-        let text =
-            "[general]\ngaps_in = 2\n\n[tray]\ntile = false  # on\n\n[cursor]\nwarp = false\n";
+        let text = "general:\n  gaps_in: 2\n\ntray:  # switches\n    tile: false  # on\n\ncursor:\n  warp: false\n";
         let out = set_bools(text, "tray", &[("tile", true), ("key", true)]);
         assert_eq!(
             out,
-            "[general]\ngaps_in = 2\n\n[tray]\ntile = true  # on\nkey = true\n\n[cursor]\nwarp = false\n"
+            "general:\n  gaps_in: 2\n\ntray:  # switches\n    tile: true  # on\n    key: true\n\ncursor:\n  warp: false\n"
         );
-        let out = set_bools("[general]\ntiling = true\n", "tray", &[("tile", true)]);
-        assert_eq!(out, "[general]\ntiling = true\n\n[tray]\ntile = true\n");
+        let out = set_bools("general:\n  tiling: true\n", "tray", &[("tile", true)]);
+        assert_eq!(out, "general:\n  tiling: true\n\ntray:\n  tile: true\n");
     }
 
     #[test]
     fn partial_section_keeps_other_defaults() {
-        let loaded = Loaded::parse("[general]\ngaps_in = 2\n").unwrap();
+        let loaded = Loaded::parse("general:\n  gaps_in: 2\n").unwrap();
         assert_eq!(loaded.config.general.gaps_in, 2);
         assert_eq!(loaded.config.general.gaps_out, General::default().gaps_out);
     }
 
     #[test]
     fn reports_bad_binds() {
-        let err = Loaded::parse("[binds]\n\"super+q\" = \"explode\"\n").unwrap_err();
+        let err = Loaded::parse("binds:\n  super+q: explode\n").unwrap_err();
         assert!(err.to_string().contains("super+q"));
-        assert!(Loaded::parse("[binds]\n\"hyper+q\" = \"killactive\"\n").is_err());
+        assert!(Loaded::parse("binds:\n  hyper+q: killactive\n").is_err());
     }
 
     #[test]
@@ -295,16 +317,17 @@ mod tests {
 
     #[test]
     fn remap_layers_replace_the_defaults() {
-        let loaded = Loaded::parse("[remap.layers.main]\ncapslock = \"esc\"\n").unwrap();
+        let loaded = Loaded::parse("remap:\n  layers:\n    main:\n      capslock: esc\n").unwrap();
         assert!(loaded.remap.layer("capslock").is_none());
-        let err = Loaded::parse("[remap.layers.main]\ncapslock = \"layer(nav)\"\n").unwrap_err();
+        let err = Loaded::parse("remap:\n  layers:\n    main:\n      capslock: layer(nav)\n")
+            .unwrap_err();
         assert!(err.to_string().contains("unknown layer `nav`"), "{err}");
     }
 
     #[test]
     fn win_l_bind_loads_without_override() {
         // The daemon skips it instead, so the default binds stay valid either way.
-        let config = "[general]\noverride_win_l = false\n[binds]\n\"super+l\" = \"movefocus r\"\n";
+        let config = "general:\n  override_win_l: false\nbinds:\n  super+l: movefocus r\n";
         assert!(Loaded::parse(config).unwrap().binds[0].0.is_win_l());
     }
 
@@ -320,41 +343,27 @@ mod tests {
 
     #[test]
     fn hotkey_forms_parse() {
-        let config = r#"[hotkeys]
-"super+e" = '"C:\Apps\Editor.exe" -n'
-"super+m" = { run = "mail.exe" }
-"super+t" = { run = ["wtd.exe -w new", "wt.exe -w new"] }
+        let config = r#"hotkeys:
+  super+e: { run: '"C:\Apps\Editor.exe" -n', focus: true }
+  super+m: mail.exe
+  super+c: { run: code.cmd, exe: Code.exe, focus: true }
+  super+t: { run: [wtd.exe -w new, wt.exe -w new] }
 "#;
         let loaded = Loaded::parse(config).unwrap();
-        assert_eq!(loaded.hotkeys.len(), 3);
-        let hotkey = |key: &str| &loaded.config.hotkeys[key];
-        let e = hotkey("super+e");
-        assert_eq!(e.exe().as_deref(), Some("Editor.exe"));
-        let m = hotkey("super+m");
-        assert_eq!(m.exe().as_deref(), Some("mail.exe"));
-        let t = hotkey("super+t");
+        assert_eq!(loaded.hotkeys.len(), 4);
+        let exe = |key: &str| loaded.config.hotkeys[key].exe();
+        assert_eq!(exe("super+e").as_deref(), Some("Editor.exe"));
+        assert_eq!(exe("super+m"), None);
+        assert_eq!(exe("super+c").as_deref(), Some("Code.exe"));
+        assert_eq!(exe("super+t"), None);
+        let t = &loaded.config.hotkeys["super+t"];
         assert_eq!(t.commands(), ["wtd.exe -w new", "wt.exe -w new"]);
-        assert_eq!(t.exe().as_deref(), Some("wtd.exe"));
-        assert!(
-            Loaded::parse(
-                "[hotkeys]
-\"super+x\" = { run = [] }
-"
-            )
-            .is_err()
-        );
-        assert!(
-            Loaded::parse(
-                "[hotkeys]
-\"hyper+x\" = \"x.exe\"
-"
-            )
-            .is_err()
-        );
+        assert!(Loaded::parse("hotkeys:\n  super+x: { run: [] }\n").is_err());
+        assert!(Loaded::parse("hotkeys:\n  hyper+x: x.exe\n").is_err());
     }
 
     #[test]
     fn rejects_unknown_fields() {
-        assert!(Loaded::parse("[general]\ngap = 2\n").is_err());
+        assert!(Loaded::parse("general:\n  gap: 2\n").is_err());
     }
 }
