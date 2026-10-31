@@ -9,6 +9,7 @@ How Tile fits in with Windows, and what it changes.
 | `%APPDATA%\Tile\config.yml` | [Config](configuration.md), created on first run with only the tray switches |
 | `%LOCALAPPDATA%\Tile\logs` | Daily log files, while logging is on |
 | `%LOCALAPPDATA%\Tile\restore.json` | What to undo if Tile dies, while it runs |
+| `%LOCALAPPDATA%\Tile\launcher.json` | The [launcher](launcher.md)'s launch history, while `launcher.track_usage` is on |
 | `C:\Program Files\Tile` | The installed programs |
 
 ## The tray
@@ -59,6 +60,14 @@ installed Tile runs as administrator, so it manages them like any other window. 
 hand without admin rights (e.g. `cargo run`) leaves them alone, and its keybinds and remapping
 don't work while one has focus. Programs Tile starts (`exec` and `focusorexec` binds) go through a
 launcher running with your normal rights, so they don't run as administrator.
+
+## The launcher
+
+The [launcher](launcher.md) lists the shell's `shell:AppsFolder` (Start's All apps), takes each
+icon from the shell (`IShellItemImageFactory`) and starts apps as `shell:AppsFolder\<id>`
+through the normal-rights helper above. Its window is created hidden at startup, is never tiled
+(Tile leaves its own windows alone) and takes focus the way `focusorexec` does. It closes when it
+loses focus.
 
 ## Secure desktops
 

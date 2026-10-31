@@ -4,7 +4,11 @@ tray:
   remap: false
   logging: false
 
+launcher:
+  font: NeoSpleen
+
 binds:
+  super+r: launcher
   super+t: exec wtd.exe -w new
   super+p: exec wtd.exe -w new -p "NixOS - Personal"
   super+w: exec wtd.exe -w new -p "NixOS - Work"

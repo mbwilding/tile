@@ -87,6 +87,37 @@ entirely: a feature runs only when both its `general` setting and its tray switc
 | `scrolling` | `proportion_presets` | `[0.25, 0.333, 0.5, 1.0]` | Widths `cycleproportion` steps through. |
 | `scrolling` | `center_focused` | `on_overflow` | When to centre the focused column: `always`, `on_overflow` (when it would otherwise be partly off screen) or `never`. |
 
+### `launcher`
+
+The app launcher, opened by the `launcher` dispatcher. See [launcher](launcher.md).
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `width` | `560` | Width in pixels at 100% scaling (scaled with the monitor). |
+| `height` | `500` | Height in pixels at 100% scaling. |
+| `search_position` | `top` | Where the search box sits: `top` or `bottom`. |
+| `show_icons` | `true` | Show each app's icon. |
+| `compact` | `false` | Shorter rows, without the app id under the name. |
+| `max_results` | `50` | The most apps listed. |
+| `track_usage` | `true` | Remember launches in `%LOCALAPPDATA%\Tile\launcher.json`. |
+| `sort_by_usage` | `true` | List recent launches first, and let often launched apps win close matches. |
+| `ignore_mouse` | `false` | The mouse doesn't select or launch. |
+| `pinned` | `[]` | App names or ids listed first, in this order, before anything is typed. |
+| `hide` | `[]` | Regexes (case-insensitive) on the app name or id; matching apps are never listed. |
+| `font` | `Segoe UI` | Font family. |
+| `font_size` | `11` | Font size in points. |
+| `corners` | `round` | Window corners: `round`, `small` or `square` (Windows 11). |
+| `opacity` | `1.0` | How opaque the whole window is, from `0.1` to `1.0`. |
+| `background` | `"#1e1e2e"` | Window colour. |
+| `border` | `"#89b4fa"` | The window's outline (Windows 11). |
+| `foreground` | `"#cdd6f4"` | Text colour. |
+| `dimmed` | `"#7f849c"` | The app id line and the placeholder. |
+| `selected` | `"#89b4fa"` | The selected row. |
+| `selected_foreground` | `"#1e1e2e"` | Text on the selected row. |
+| `placeholder` | `""` | Shown in the empty search box; `{prefix}` becomes `command_prefix`. Empty shows `Search apps or equations, ! for commands` with the real prefix, leaving out the calculator or commands when they are off. |
+| `calculator` | `true` | Show the value of a search that reads as a calculation first; Enter copies it. See [calculator](launcher.md#calculator). |
+| `command_prefix` | `"!"` | Typing this first runs a command line or a Tile dispatcher instead of searching apps. `""` switches it off. See [commands](launcher.md#commands). |
+
 ### `binds`
 
 Keybinds, as `<keys>: <dispatcher>`. They add to the [default binds](keybinds.md#default-keys):
@@ -171,6 +202,32 @@ scrolling:
 remap:
   modifier_guard: true          # a layer's lone Alt or Win doesn't open a menu or Start
   layers: {}                    # none; see key-remapping.md
+
+launcher:
+  width: 560                    # px at 100% scaling
+  height: 500
+  search_position: top          # top | bottom
+  show_icons: true
+  compact: false                # shorter rows, no app id line
+  max_results: 50
+  track_usage: true             # remember launches
+  sort_by_usage: true           # recent first, often used win close matches
+  ignore_mouse: false
+  pinned: []                    # names or ids listed first
+  hide: []                      # regexes on name or id never listed
+  font: Segoe UI
+  font_size: 11                 # points
+  corners: round                # round | small | square
+  opacity: 1.0                  # 0.1 to 1.0
+  background: "#1e1e2e"
+  border: "#89b4fa"
+  foreground: "#cdd6f4"
+  dimmed: "#7f849c"             # app ids and the placeholder
+  selected: "#89b4fa"
+  selected_foreground: "#1e1e2e"
+  placeholder: ""                # "" for "Search apps or equations, ! for commands"; {prefix} is the prefix
+  calculator: true              # `12 * 3` shows = 36; Enter copies it
+  command_prefix: "!"           # run a command line or dispatcher; "" for off
 
 binds: {}                       # added to the default binds; see keybinds.md
 

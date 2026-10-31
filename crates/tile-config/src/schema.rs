@@ -15,6 +15,7 @@ pub struct Config {
     pub master: Master,
     pub scrolling: Scrolling,
     pub remap: Remap,
+    pub launcher: Launcher,
     /// `super+shift+q: killactive`, added to (or overriding) the default binds unless
     /// `general.default_binds` is off. An empty value unbinds a default.
     pub binds: BTreeMap<String, Option<String>>,
@@ -131,6 +132,7 @@ impl Default for Config {
             master: Master::default(),
             scrolling: Scrolling::default(),
             remap: Remap::default(),
+            launcher: Launcher::default(),
             binds: BTreeMap::new(),
             rules: default_rules(),
         }
@@ -345,6 +347,128 @@ impl Default for Remap {
             layers: BTreeMap::new(),
         }
     }
+}
+
+/// The app launcher opened by the `launcher` dispatcher: a search box over everything Start
+/// lists, centred on the focused monitor.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Launcher {
+    /// Width in pixels at 100% scaling.
+    pub width: u32,
+    /// Height in pixels at 100% scaling.
+    pub height: u32,
+    pub search_position: SearchPosition,
+    /// Show each app's icon.
+    pub show_icons: bool,
+    /// Shorter rows, without the app id under the name.
+    pub compact: bool,
+    pub max_results: usize,
+    /// Remember launches, for `sort_by_usage`.
+    pub track_usage: bool,
+    /// List recently launched apps first, and let often launched ones win close matches.
+    pub sort_by_usage: bool,
+    /// The mouse doesn't select or launch.
+    pub ignore_mouse: bool,
+    /// App names or ids listed first, in this order, before anything is typed.
+    pub pinned: Vec<String>,
+    /// Regexes (case-insensitive) on the app name or id; matching apps are never listed.
+    pub hide: Vec<String>,
+    pub font: String,
+    /// Font size in points.
+    pub font_size: u32,
+    pub corners: Corners,
+    /// How opaque the whole window is, from 0.1 to 1.0.
+    pub opacity: f32,
+    pub background: Color,
+    /// The window's outline (Windows 11).
+    pub border: Color,
+    pub foreground: Color,
+    /// The app id line and the placeholder.
+    pub dimmed: Color,
+    /// The selected row.
+    pub selected: Color,
+    /// Text on the selected row.
+    pub selected_foreground: Color,
+    /// Shown in the empty search box, with `{prefix}` replaced by `command_prefix`. Empty shows
+    /// `Search apps or equations, <prefix> for commands`, leaving out what is switched off.
+    pub placeholder: String,
+    /// Show the value of a search that reads as a calculation (`12 * 3`, `sqrt(2)`) first;
+    /// Enter copies it.
+    pub calculator: bool,
+    /// Text starting with this runs a command line or a Tile dispatcher instead of searching
+    /// apps. Empty switches command mode off.
+    pub command_prefix: String,
+}
+
+impl Launcher {
+    /// The text shown in the empty search box.
+    pub fn placeholder_text(&self) -> String {
+        let prefix = &self.command_prefix;
+        if !self.placeholder.is_empty() {
+            return self.placeholder.replace("{prefix}", prefix);
+        }
+        let search = if self.calculator {
+            "Search apps or equations"
+        } else {
+            "Search apps"
+        };
+        if prefix.is_empty() {
+            search.into()
+        } else {
+            format!("{search}, {prefix} for commands")
+        }
+    }
+}
+
+impl Default for Launcher {
+    fn default() -> Self {
+        Self {
+            width: 560,
+            height: 500,
+            search_position: SearchPosition::Top,
+            show_icons: true,
+            compact: false,
+            max_results: 50,
+            track_usage: true,
+            sort_by_usage: true,
+            ignore_mouse: false,
+            pinned: Vec::new(),
+            hide: Vec::new(),
+            font: "Segoe UI".into(),
+            font_size: 11,
+            corners: Corners::Round,
+            opacity: 1.0,
+            background: Color::rgb(0x1e, 0x1e, 0x2e),
+            border: Color::rgb(0x89, 0xb4, 0xfa),
+            foreground: Color::rgb(0xcd, 0xd6, 0xf4),
+            dimmed: Color::rgb(0x7f, 0x84, 0x9c),
+            selected: Color::rgb(0x89, 0xb4, 0xfa),
+            selected_foreground: Color::rgb(0x1e, 0x1e, 0x2e),
+            placeholder: String::new(),
+            calculator: true,
+            command_prefix: "!".into(),
+        }
+    }
+}
+
+/// Where the launcher's search box sits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SearchPosition {
+    #[default]
+    Top,
+    Bottom,
+}
+
+/// Window corner rounding (Windows 11).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Corners {
+    #[default]
+    Round,
+    Small,
+    Square,
 }
 
 /// A window rule. All given matchers must match for the actions to apply.

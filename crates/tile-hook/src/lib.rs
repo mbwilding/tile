@@ -1,7 +1,12 @@
 //! The Win32 calls winsafe doesn't wrap safely: `WH_KEYBOARD_LL` hooks that can block key-ups
 //! and report scancodes, `SendInput` by scancode, session notifications, swapping the system
-//! cursors (to hide the pointer), the single-instance mutex and the console close handler.
-//! This is the only crate in Tile with `unsafe`, and it exposes a safe API.
+//! cursors (to hide the pointer), the single-instance mutex, the console close handler and
+//! app icons from the shell. This is the only crate in Tile with `unsafe`, and it exposes a
+//! safe API.
+
+mod icon;
+
+pub use icon::{Icon, monitor_dpi, shell_icon};
 
 use std::{
     cell::RefCell,
@@ -400,6 +405,13 @@ pub fn post_close(hwnd: isize) -> bool {
     // SAFETY: posting a message with no pointers; Windows validates the handle and fails for
     // one that isn't a window.
     unsafe { PostMessageW(hwnd as *mut c_void, WM_SYSCOMMAND, SC_CLOSE as usize, 0) != 0 }
+}
+
+/// Posts `WM_APP + offset` to the window `hwnd`, to wake its thread from another one.
+pub fn post_app(hwnd: isize, offset: u32) -> bool {
+    // SAFETY: posting a message with no pointers; Windows validates the handle and fails for
+    // one that isn't a window.
+    unsafe { PostMessageW(hwnd as *mut c_void, WM_APP + offset, 0, 0) != 0 }
 }
 
 /// What the mouse hook reports.

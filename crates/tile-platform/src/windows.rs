@@ -137,7 +137,7 @@ fn focus_attached(hwnd: &w::HWND) -> bool {
     focused
 }
 
-fn focus_hwnd(hwnd: &w::HWND) -> bool {
+pub(crate) fn focus_hwnd(hwnd: &w::HWND) -> bool {
     if hwnd.IsIconic() {
         let _ = hwnd.ShowWindowAsync(co::SW::RESTORE);
     }

@@ -10,15 +10,23 @@ cargo fmt --all
 `cargo run` starts the daemon (the default member); pass `--workspace` to build or test
 everything. See the README for running a build without installing it.
 
+Aliases in `.cargo/config.toml`:
+
+| Alias | Runs | Does |
+| --- | --- | --- |
+| `cargo release` | `cargo build --release --workspace` | builds `tile.exe` and `tilectl.exe` in release |
+| `cargo deploy` | `cargo run --release -p tilectl -- install` | installs the build from `cargo release` |
+| `cargo deploy-dev` | `cargo run -p tilectl -- install` | installs the debug build from `cargo build --workspace` |
+
 ## Project layout
 
 | Crate | Purpose |
 | --- | --- |
-| `tile-core` | Platform-independent state, layouts, dispatchers and easing (unit tested) |
+| `tile-core` | Platform-independent state, layouts, dispatchers, easing and the launcher's search (unit tested) |
 | `tile-remap` | The remapping engine: keyd's layers and overloads as a pure state machine (tested) |
 | `tile-config` | YAML schema, keybind parsing, window rules, remap layers, the tray switches and file watching |
-| `tile-hook` | The low-level keyboard and mouse hooks, `SendInput` and other raw calls: the only `unsafe` |
-| `tile-platform` | Win32: window events, placement and animation, the keybind hook, the Win+drag mouse hook, tray, virtual desktops |
+| `tile-hook` | The low-level keyboard and mouse hooks, `SendInput`, shell icons and other raw calls: the only `unsafe` |
+| `tile-platform` | Win32: window events, placement and animation, the keybind hook, the Win+drag mouse hook, tray, the launcher window, virtual desktops |
 | `tile-ipc` | Named-pipe JSON protocol |
 | `tile` | The daemon (`tile.exe`) |
 | `tilectl` | The command-line tool (`tilectl.exe`), including install/uninstall |

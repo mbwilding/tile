@@ -50,7 +50,7 @@ win-hotkeys = { version = "0.5", default-features = false }
 wineventhook = { version = "0.11", default-features = false }
 # Pinned to the version winvd uses, only for its `HWND` type (constructing it is safe).
 windows = { version = "0.58", default-features = false, features = ["Win32_Foundation"] }
-winsafe = { version = "0.0.29", default-features = false, features = ["user", "dwm", "kernel", "gdi", "gui", "ole", "advapi"] }
+winsafe = { version = "0.0.29", default-features = false, features = ["user", "dwm", "kernel", "gdi", "gui", "ole", "shell", "advapi"] }
 windows-sys = { version = "0.61", default-features = false }
 winvd = { version = "0.0.49", default-features = false }
 

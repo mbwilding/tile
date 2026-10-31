@@ -1040,6 +1040,8 @@ dependencies = [
 name = "tile-platform"
 version = "0.1.0"
 dependencies = [
+ "regex",
+ "serde_json",
  "tile-config",
  "tile-core",
  "tile-hook",

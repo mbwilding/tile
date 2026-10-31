@@ -82,6 +82,7 @@ A `binds` value is `<dispatcher> [arguments]`. `tilectl dispatch` runs the same 
 | `movetodesktop <n\|next\|prev>` | send the window to another virtual desktop |
 | `pin` | show the window on all virtual desktops (it floats) |
 | `lock` | lock the computer (works while Win+L is taken over) |
+| `launcher` | *always*: open or close the [app launcher](launcher.md) |
 | `reload` / `togglepause` / `exit` | reload the config / pause both tiling and remapping (or resume both) / quit |
 
 Directions can also be written `left`, `right`, `up` and `down`.

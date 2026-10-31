@@ -9,7 +9,7 @@ tilectl subscribe                 # JSON lines on workspace, active window and l
 tilectl reload                    # reload the config
 tilectl check [file]              # check a config file without applying it
 tilectl config                    # print the config file's path
-tilectl install / uninstall       # see the README
+tilectl install / uninstall       # see the README; `cargo deploy` installs a checkout's build
 ```
 
 `tilectl query windows` is the way to find the `exe`, `class` and `title` to write
