@@ -12,6 +12,7 @@ binds:
   super+t: exec wtd.exe -w new
   super+p: exec wtd.exe -w new -p "NixOS - Personal"
   super+w: exec wtd.exe -w new -p "NixOS - Work"
+  super+semicolon: "exec explorer.exe ms-screenclip:"
   super+ctrl+h: workspace 1
   super+ctrl+t: workspace 2
   super+ctrl+n: workspace 3
