@@ -21,7 +21,7 @@ menu is suppressed), so no separate hotkey program is needed.
 - Coloured focus borders (Windows 11) and eased move/resize animations
 - Optional title bar removal for tiled windows, with per-app overrides
 - Key remapping in keyd's terms: layers, modifier layers, `overload()`, `overloadt()` and key
-  sequences. The built-in layers are nona's keyd setup
+  sequences
 - TOML config, applied live on save, with window rules
 - `tilectl`: dispatch commands, query state as JSON, subscribe to events, check the config,
   install/uninstall
@@ -43,7 +43,7 @@ start off the first time; Hotkey starts on. Try:
 | --- | --- |
 | `Win+Arrows` / `Win+H/J/K/L` | move focus, across monitors too |
 | `Win+Shift+Arrows` / `Win+Shift+H/J/K/L` | move the window |
-| `Win+Ctrl+H/T/N/S/-` | switch workspace 1 to 5 |
+| `Win+1`…`Win+9` | switch workspace |
 | `Win+Space` | next layout |
 | `Win+B` / `Win+T` | Chrome / Windows Terminal |
 | `Win+Q` | close the window |

@@ -287,10 +287,10 @@ mod tests {
     }
 
     #[test]
-    fn built_in_remap_layers() {
+    fn no_built_in_remap_layers() {
         let loaded = Loaded::defaults();
         assert!(loaded.config.general.tiling && loaded.config.general.remap);
-        assert!(loaded.remap.layer("capslock+shift").is_some());
+        assert!(loaded.config.remap.layers.is_empty());
     }
 
     #[test]
@@ -311,10 +311,7 @@ mod tests {
     #[test]
     fn built_in_hotkeys() {
         let loaded = Loaded::defaults();
-        let exe = |key: &str| {
-            let hotkey = &loaded.config.hotkeys[key];
-            hotkey.exe(hotkey.commands().first().map_or("", String::as_str))
-        };
+        let exe = |key: &str| loaded.config.hotkeys[key].exe();
         assert_eq!(exe("super+b"), None);
         assert_eq!(exe("super+t"), None);
         assert_eq!(exe("super+q"), None);
@@ -332,12 +329,12 @@ mod tests {
         assert_eq!(loaded.hotkeys.len(), 3);
         let hotkey = |key: &str| &loaded.config.hotkeys[key];
         let e = hotkey("super+e");
-        assert_eq!(e.exe(&e.commands()[0]).as_deref(), Some("Editor.exe"));
+        assert_eq!(e.exe().as_deref(), Some("Editor.exe"));
         let m = hotkey("super+m");
-        assert_eq!(m.exe(&m.commands()[0]).as_deref(), Some("mail.exe"));
+        assert_eq!(m.exe().as_deref(), Some("mail.exe"));
         let t = hotkey("super+t");
         assert_eq!(t.commands(), ["wtd.exe -w new", "wt.exe -w new"]);
-        assert_eq!(t.exe(&t.commands()[1]).as_deref(), Some("wt.exe"));
+        assert_eq!(t.exe().as_deref(), Some("wtd.exe"));
         assert!(
             Loaded::parse(
                 "[hotkeys]

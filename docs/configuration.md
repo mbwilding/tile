@@ -96,14 +96,14 @@ the tray's Hotkey item (which starts on). An entry is one of:
 | `"super+b" = "chrome.exe"` | Focus a window of that program, or start it. The program is the command's file name. |
 | `"super+t" = { run = "wt.exe", focus = false }` | Always start a new instance, never focus an existing one. |
 | `"super+e" = { run = "code.cmd", exe = "Code.exe" }` | Start `run`, but focus a window of the process `exe` first if there is one. Use it when the process has another name than the command. |
-| `"super+t" = { run = ["wtd.exe", "wt.exe"], focus = false }` | Run the first command whose program is installed, here Windows Terminal Dev, else Windows Terminal. |
+| `"super+t" = { run = ["wt.exe", "notepad.exe"], focus = false }` | Start each command in turn without waiting for any to finish, here Windows Terminal and Notepad. |
 | `"super+q" = { close = true }` | Close the focused window, like Alt+F4. |
 
 `run` is a command line, so it can take arguments: `{ run = "chrome.exe --new-window", focus =
-false }` opens a new Chrome window every time. A program counts as installed when it is a path that
-exists, is on `PATH` (app execution aliases like `wt.exe` included) or is registered under App
-Paths (like `chrome.exe`). If none is, the last command runs anyway. Without `exe`, the window to
-focus is the program of the command that was picked.
+false }` opens a new Chrome window every time. Commands start through `start`, so a program on
+`PATH` (app execution aliases like `wt.exe` included) or registered under App Paths (like
+`chrome.exe`) needs no path. Without `exe`, the window to focus is the first command's program;
+when one is focused, none of the commands run.
 
 Pressing a launch key again moves on to the next window of that program on the current virtual
 desktop. A key bound in both `[binds]` and `[hotkeys]` runs the `[binds]` entry.
@@ -174,79 +174,32 @@ center_focused = "on_overflow"                  # always | on_overflow | never
 # Launch, focus and close keys. Work with tiling off; the tray's Hotkey item switches them.
 [hotkeys]
 "super+b" = { run = "chrome.exe --new-window", focus = false }                  # a new window each time
-"super+t" = { run = ["wtd.exe -w new", "wt.exe -w new"], focus = false }   # Terminal Dev, else Terminal
+"super+t" = { run = "wt.exe -w new", focus = false }                            # a new window each time
 "super+q" = { close = true }
 
 [remap]
 modifier_guard = true         # a layer's lone Alt or Win doesn't open a menu or Start
-
-[remap.layers.main]
-"/" = "overloadt(alt, /, 200)"
-";" = "overloadt(control, ;, 200)"
-a = "overloadt(control, a, 200)"
-backspace = "noop"
-capslock = "overload(capslock, backspace)"
-f = "overloadt(numbers, f, 200)"
-l = "overloadt(meta, l, 200)"
-leftshift = "esc"
-m = "overloadt(fkeys, m, 200)"
-s = "overloadt(meta, s, 200)"
-space = "overload(shift, space)"
-z = "overloadt(alt, z, 200)"
-
-[remap.layers."capslock:C"]
-c = "down"
-j = "left"
-p = "right"
-v = "up"
-
-[remap.layers."capslock+shift"]
-c = "C-down"
-j = "C-left"
-p = "C-right"
-v = "C-up"
-
-[remap.layers.fkeys]
-a = "f5"
-c = "f11"
-d = "f7"
-e = "f3"
-f = "f8"
-q = "f1"
-r = "f4"
-s = "f6"
-v = "f12"
-w = "f2"
-x = "f10"
-z = "f9"
-
-[remap.layers.numbers]
-"," = "2"
-"." = "3"
-";" = "0"
-i = "8"
-j = "4"
-k = "5"
-l = "6"
-m = "1"
-o = "9"
-u = "7"
+layers = {}                   # none; see key-remapping.md
 
 [binds]
-"super+ctrl+h" = "workspace 1"
-"super+ctrl+t" = "workspace 2"
-"super+ctrl+n" = "workspace 3"
-"super+ctrl+s" = "workspace 4"
-"super+ctrl+minus" = "workspace 5"
-"super+ctrl+shift+h" = "movetoworkspace 1"
-"super+ctrl+shift+t" = "movetoworkspace 2"
-"super+ctrl+shift+n" = "movetoworkspace 3"
-"super+ctrl+shift+s" = "movetoworkspace 4"
-"super+ctrl+shift+minus" = "movetoworkspace 5"
+"super+1" = "workspace 1"
+"super+2" = "workspace 2"
+"super+3" = "workspace 3"
+"super+4" = "workspace 4"
+"super+5" = "workspace 5"
 "super+6" = "workspace 6"
 "super+7" = "workspace 7"
+"super+8" = "workspace 8"
+"super+9" = "workspace 9"
+"super+shift+1" = "movetoworkspace 1"
+"super+shift+2" = "movetoworkspace 2"
+"super+shift+3" = "movetoworkspace 3"
+"super+shift+4" = "movetoworkspace 4"
+"super+shift+5" = "movetoworkspace 5"
 "super+shift+6" = "movetoworkspace 6"
 "super+shift+7" = "movetoworkspace 7"
+"super+shift+8" = "movetoworkspace 8"
+"super+shift+9" = "movetoworkspace 9"
 "super+left" = "movefocus l"
 "super+right" = "movefocus r"
 "super+up" = "movefocus u"

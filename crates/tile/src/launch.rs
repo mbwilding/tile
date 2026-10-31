@@ -24,18 +24,26 @@ fn elevated() -> bool {
 
 /// Runs a command line as the normal user. Must be called inside the Tokio runtime.
 pub fn exec(command_line: &str) {
+    exec_all(&[command_line.to_owned()]);
+}
+
+/// Runs command lines one after another as the normal user. Must be called inside the Tokio
+/// runtime.
+pub fn exec_all(command_lines: &[String]) {
     if !elevated() {
-        run(command_line);
+        command_lines.iter().for_each(|c| run(c));
         return;
     }
-    let command_line = command_line.to_owned();
+    let command_lines = command_lines.to_vec();
     tokio::spawn(async move {
-        let request = LaunchRequest::Exec {
-            command_line: command_line.clone(),
-        };
-        if let Err(e) = launcher::send(&request).await {
-            tracing::warn!("no launcher ({e}); running `{command_line}` as administrator");
-            run(&command_line);
+        for command_line in command_lines {
+            let request = LaunchRequest::Exec {
+                command_line: command_line.clone(),
+            };
+            if let Err(e) = launcher::send(&request).await {
+                tracing::warn!("no launcher ({e}); running `{command_line}` as administrator");
+                run(&command_line);
+            }
         }
     });
 }
