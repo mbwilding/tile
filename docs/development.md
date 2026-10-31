@@ -35,9 +35,15 @@ All `unsafe` lives in `tile-hook`, each block with a `// SAFETY:` comment; every
 every change returns a list of effects (place, show, hide, focus, close, exec) for the daemon to
 apply. That keeps the layouts and dispatchers testable without Windows.
 
+## CI
+
+Every push and pull request runs the `CI` workflow: `yamllint --strict .` (rules in
+`.yamllint.yml`), `cargo fmt --check`, clippy with warnings denied, and the tests, the same checks
+as [`AGENTS.md`](../AGENTS.md).
+
 ## Releasing
 
-Every push to `main` that changes more than docs runs the `Release` workflow, which tests, builds
+Every push to `main` that changes more than docs and examples runs the `Release` workflow, which tests, builds
 and publishes a GitHub release holding `tile.zip`, which has `tile.exe` and `tilectl.exe`. No
 tag is pushed: the version is the major and minor from `Cargo.toml`, with the workflow run number
 as the patch (`0.1.7`), and the release creates its own tag. To release by hand, run it from the

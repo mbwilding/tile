@@ -1,0 +1,131 @@
+---
+# Tile's defaults written out in full, with the built-in binds switched off and listed below
+# instead, so every key is visible and editable. Copy it to %APPDATA%\Tile\config.yml.
+general:
+  tiling: true # manage windows; false leaves them alone
+  default_binds: false # only the binds below; true adds them to the defaults
+  remap: true # remap keys with the remap layers
+  gaps_in: 10 # px between neighbouring windows
+  gaps_out: 10 # px between windows and the monitor edge
+  independent_workspaces: true # each monitor has its own workspaces; false syncs them
+  layout: master # dwindle | master | monocle | scrolling | even
+  borders: true # colour the window border to show focus (Windows 11)
+  border_active: "#89b4fa"
+  border_inactive: "#45475a"
+  focus_new_windows: true
+  decorations: false # keep title bars on tiled windows
+  override_win_l: true # take over Win+L
+  disable_click_to_do: true # switch off Click to Do
+
+# The tray's switches. Tile saves these when you change them in the tray.
+tray:
+  tile: false # window manager on (starts off)
+  remap: false # key remapper on (starts off)
+  logging: false
+
+cursor:
+  warp: true # move the pointer onto the window a keybind focuses, then hide it
+  hide_on_key: true # typing hides the pointer until the mouse moves or clicks
+  drag: true # hold Win and drag a window with the left button
+
+animations:
+  enabled: true
+  duration_ms: 180
+  bezier: [0.0, 0.75, 0.15, 1.0] # cubic-bezier control points (x1, y1, x2, y2)
+
+dwindle:
+  split_ratio: 0.5 # share of a split given to the existing window
+
+master:
+  mfact: 0.5 # width of the master area
+  count: 1 # windows in the master area
+  new_is_master: false # new windows become master
+
+scrolling:
+  proportion: 0.333 # width of new columns, as a share of the monitor
+  proportion_presets: [0.25, 0.333, 0.5, 1.0] # widths `cycleproportion` steps through
+  center_focused: on_overflow # always | on_overflow | never
+
+remap:
+  modifier_guard: true # a layer's lone Alt or Win doesn't open a menu or Start
+  layers: {} # none; see key-remapping.md
+
+# Every default bind. See keybinds.md for the key names and dispatchers.
+binds:
+  super+b: exec chrome.exe --new-window
+  super+t: exec wt.exe -w new
+  super+q: killactive
+  super+1: workspace 1
+  super+2: workspace 2
+  super+3: workspace 3
+  super+4: workspace 4
+  super+5: workspace 5
+  super+6: workspace 6
+  super+7: workspace 7
+  super+8: workspace 8
+  super+9: workspace 9
+  super+shift+1: movetoworkspace 1
+  super+shift+2: movetoworkspace 2
+  super+shift+3: movetoworkspace 3
+  super+shift+4: movetoworkspace 4
+  super+shift+5: movetoworkspace 5
+  super+shift+6: movetoworkspace 6
+  super+shift+7: movetoworkspace 7
+  super+shift+8: movetoworkspace 8
+  super+shift+9: movetoworkspace 9
+  super+left: movefocus l
+  super+right: movefocus r
+  super+up: movefocus u
+  super+down: movefocus d
+  super+h: movefocus l
+  super+j: movefocus d
+  super+k: movefocus u
+  super+l: movefocus r # needs override_win_l (the default)
+  super+shift+left: movewindow l
+  super+shift+right: movewindow r
+  super+shift+up: movewindow u
+  super+shift+down: movewindow d
+  super+shift+h: movewindow l
+  super+shift+j: movewindow d
+  super+shift+k: movewindow u
+  super+shift+l: movewindow r
+  super+alt+left: resizeactive -40 0
+  super+alt+right: resizeactive 40 0
+  super+alt+up: resizeactive 0 -40
+  super+alt+down: resizeactive 0 40
+  super+alt+h: resizeactive -40 0
+  super+alt+j: resizeactive 0 40
+  super+alt+k: resizeactive 0 -40
+  super+alt+l: resizeactive 40 0
+  super+ctrl+shift+left: movetodesktop prev
+  super+ctrl+shift+right: movetodesktop next
+  super+ctrl+p: pin
+  super+comma: focusmonitor l
+  super+period: focusmonitor r
+  super+enter: swapwithmaster
+  super+f: togglefloating
+  super+o: fullscreen
+  super+space: cyclelayout
+  super+n: cyclenext
+  super+z: lock
+  super+s: togglesplit
+  super+r: cycleproportion
+  super+c: centercolumn
+  super+bracketleft: consumewindow l
+  super+bracketright: consumewindow r
+  super+backslash: expelwindow
+  super+shift+r: reload
+  super+shift+p: togglepause
+  super+shift+e: exit
+
+rules:
+  # Standard dialogs float.
+  - class: "^#32770$"
+    float: true
+    ignore: false
+  # Shell windows are left alone.
+  - class: '^(Windows\.UI\.Core\.CoreWindow|XamlExplorerHostIslandWindow|Shell_TrayWnd)$'
+    ignore: true
+  # So are PowerToys and ShareX.
+  - exe: '^(PowerToys.*|ShareX)\.exe$'
+    ignore: true

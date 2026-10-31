@@ -24,6 +24,8 @@ Everything has documentation, and docs are updated in the same change as the cod
   and a copy-paste default config between the `default-config` markers. When you add, remove or
   change a setting or a default (in `crates/tile-config/src/schema.rs`), update that block and the
   reference tables. `cargo test -p tile-config --test docs` fails if the block drifts.
+- **`examples/default.yml` must match too**: every setting at its default and every default bind
+  listed. `cargo test -p tile-config --test examples` checks it and that every example loads.
 - Keybinds, dispatchers and key names go in `docs/keybinds.md` (and the default bind table must
   match `DEFAULT_BINDS`); layouts in `docs/layouts.md`; rules in `docs/window-rules.md`;
   remapping in `docs/key-remapping.md`; `tilectl` in `docs/tilectl.md`; anything touching how

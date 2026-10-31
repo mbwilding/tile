@@ -8,6 +8,10 @@ anything else; the [default config](#the-default-config) below lists them all to
 and `tilectl check [file]` reports what is wrong with a config. A bad config is not applied; the
 previous one is kept.
 
+Whole configs to start from are in [`examples/`](../examples): `default.yml` is the defaults
+written out in full, every bind included (with `default_binds: false`), and `mbwilding.yml` is
+the author's own Dvorak setup with home-row mods.
+
 These sections **replace** the built-in set entirely when you write them, so copy the defaults
 from the end of this page as a starting point:
 
