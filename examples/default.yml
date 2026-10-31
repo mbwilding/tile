@@ -90,7 +90,8 @@ launcher:
   command_prefix: "!" # run a command line or dispatcher; "" for off
   system_items: true # offer volume, network, Wi-Fi, Bluetooth, battery, power and tray icons in results
   system_prefix: "@" # lists them all; "" for off
-  bar: true # bottom bar: clock, date and power buttons
+  bar: true # top bar: clock, date and power buttons
+  fix_popups: true # move a tray app's popup from a monitor's corner to the pointer
 
 workspace_indicator:
   enabled: true # flash the workspace number when switching

@@ -150,6 +150,7 @@ The app launcher, opened by the `launcher` dispatcher. See [launcher](launcher.m
 | `system_items` | `true` | List the system items (volume, network, Wi-Fi, Bluetooth, battery, clock, power) and tray icons that match what is typed, after the apps. See [system items](launcher.md#system-items-and-tray-icons). |
 | `system_prefix` | `"@"` | Typing this first lists every system item and tray icon, narrowed by what follows, even with `system_items` off. `""` switches it off. |
 | `bar` | `true` | Show the bar at the top of the launcher: the time (bold, with seconds) and date, and icon buttons for switch user, log out, lock, restart and shut down. See [the bar](launcher.md#the-bar). |
+| `fix_popups` | `true` | Move the popup of a tray icon's app next to the pointer when the app opens it in a monitor's corner (as G HUB does, for want of a taskbar to place it by). See [tray icons](launcher.md#tray-icons). |
 
 ### `workspace_indicator`
 
@@ -298,7 +299,8 @@ launcher:
   command_prefix: "!"           # run a command line or dispatcher; "" for off
   system_items: true            # offer volume, network, Wi-Fi, Bluetooth, battery, power and tray icons in results
   system_prefix: "@"            # lists them all; "" for off
-  bar: true                     # bottom bar: clock, date and power buttons
+  bar: true                     # top bar: clock, date and power buttons
+  fix_popups: true              # move a tray app's popup from a monitor's corner to the pointer
 
 workspace_indicator:
   enabled: true                 # flash the workspace number when switching

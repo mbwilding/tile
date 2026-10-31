@@ -121,6 +121,12 @@ Explorer owns the tray and there are none to show.
 Tray icons are tiny, usually 16 pixels, so one under about three quarters of the size shown is
 swapped for the sharper icon of the app's program.
 
+Some apps (G HUB is one) place the popup of their tray icon by finding the taskbar, which isn't
+there, and open it in the corner of the monitor. For two seconds after a click Tile watches the
+app for that: a small borderless window, not showing before the click, whose top left corner is
+exactly a monitor's, is moved next to the pointer (above it, or below if there is no room),
+kept on that monitor. Nothing else is touched. `fix_popups: false` switches it off.
+
 They are also found by typing, like the other items: Enter clicks the icon, and Shift+Enter
 right clicks it, which also leaves the launcher open.
 

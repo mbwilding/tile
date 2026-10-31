@@ -540,6 +540,10 @@ pub struct Launcher {
     /// Show the bar at the bottom with the time (with seconds), the date and the buttons for
     /// switching user, logging out, locking, restarting and shutting down.
     pub bar: bool,
+    /// Some apps place the popup of their tray icon by finding the taskbar, which is not there
+    /// in shell mode, and open it in the corner of a monitor. Move such a popup next to the
+    /// pointer, in the moment after the click.
+    pub fix_popups: bool,
 }
 
 impl Launcher {
@@ -592,6 +596,7 @@ impl Default for Launcher {
             system_items: true,
             system_prefix: "@".into(),
             bar: true,
+            fix_popups: true,
         }
     }
 }

@@ -4,7 +4,7 @@
 
 use std::{
     cell::RefCell,
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs,
     path::PathBuf,
     rc::Rc,
@@ -292,11 +292,21 @@ struct State {
     menu: Option<MenuWatch>,
 }
 
-/// Waiting for a tray icon's menu to close.
+/// Waiting on what a click on a tray icon opens: for its menu to close, and for a popup the app
+/// puts in a monitor's corner (because it can't find the taskbar) to be moved to the pointer.
 struct MenuWatch {
     since: Instant,
     /// The menu has been seen on screen.
     seen: bool,
+    /// The launcher stays open behind the menu (a right click); otherwise it has closed.
+    keep_open: bool,
+    /// The app's process and where the pointer was, to place its popup by.
+    pid: Option<u32>,
+    at: (i32, i32),
+    /// The app's windows that were showing at the click, which are not its popup.
+    baseline: HashSet<isize>,
+    /// Checking every [`POPUP_POLL_MS`] still, rather than every [`MENU_POLL_MS`].
+    fast: bool,
 }
 
 const MENU_TIMER: usize = 2;
@@ -313,14 +323,95 @@ const BAR_BUTTONS: [(&str, char, Power); 5] = [
 ];
 /// How long a menu may take to appear before it is taken to have never come.
 const MENU_GRACE: Duration = Duration::from_millis(1500);
+/// How long after a click a popup in a corner is moved, and how often it is looked for then.
+const FIX_WINDOW: Duration = Duration::from_secs(2);
+const POPUP_POLL_MS: u32 = 50;
+/// How often the menu is looked for once the popups are no longer.
+const MENU_POLL_MS: u32 = 250;
 
-/// Starts waiting for the menu a right click is about to open, instead of closing.
-fn watch_menu(wnd: &gui::WindowMain, s: &mut State) {
+/// The process that owns the window `raw`.
+fn pid_of(raw: isize) -> Option<u32> {
+    crate::windows::enumerate(|h| h.ptr() as isize == raw)
+        .first()
+        .map(|h| h.GetWindowThreadProcessId().1)
+}
+
+/// The windows of the process `pid` that are showing.
+fn visible_windows(pid: u32) -> HashSet<isize> {
+    crate::windows::enumerate(|h| h.GetWindowThreadProcessId().1 == pid && h.IsWindowVisible())
+        .iter()
+        .map(|h| h.ptr() as isize)
+        .collect()
+}
+
+/// Some apps place the popup of their tray icon by finding the taskbar, which is not there, and
+/// open it in the corner of a monitor. This moves such a popup, a small borderless window of the
+/// app that wasn't showing before the click and sits exactly at a monitor's top left corner, to
+/// the pointer: above it, or below if there isn't room, kept on that monitor.
+fn move_corner_popups(pid: u32, baseline: &HashSet<isize>, at: (i32, i32)) {
+    let caption = co::WS::CAPTION.raw() as isize;
+    let candidates = crate::windows::enumerate(|h| {
+        h.GetWindowThreadProcessId().1 == pid
+            && h.IsWindowVisible()
+            && !baseline.contains(&(h.ptr() as isize))
+            && h.GetWindowLongPtr(co::GWLP::STYLE) & caption != caption
+    });
+    if candidates.is_empty() {
+        return;
+    }
+    let monitors = crate::monitors::monitors();
+    for hwnd in candidates {
+        let Ok(r) = hwnd.GetWindowRect() else {
+            continue;
+        };
+        let (width, height) = (r.right - r.left, r.bottom - r.top);
+        if !(40..=800).contains(&width) || !(20..=900).contains(&height) {
+            continue;
+        }
+        let Some(corner) = monitors
+            .iter()
+            .find(|m| (r.left - m.rect.x).abs() <= 2 && (r.top - m.rect.y).abs() <= 2)
+        else {
+            continue;
+        };
+        let area = monitors
+            .iter()
+            .find(|m| m.rect.contains_point(at.0, at.1))
+            .unwrap_or(corner)
+            .work_area;
+        let x = at.0.clamp(area.x, (area.right() - width).max(area.x));
+        let above = at.1 - height;
+        let y = if above >= area.y {
+            above
+        } else {
+            (at.1 + 8).min((area.bottom() - height).max(area.y))
+        };
+        let moved = hwnd.SetWindowPos(
+            w::HwndPlace::None,
+            w::POINT::with(x, y),
+            w::SIZE::default(),
+            co::SWP::NOSIZE | co::SWP::NOZORDER | co::SWP::NOACTIVATE,
+        );
+        if let Err(e) = moved {
+            tracing::debug!("couldn't move a tray popup: {e}");
+        }
+    }
+}
+
+/// Starts watching what a click on the tray icon of the window `owner` opens. With `keep_open`
+/// the launcher stays behind the menu; otherwise it is closing.
+fn watch_menu(wnd: &gui::WindowMain, s: &mut State, owner: isize, at: (i32, i32), keep_open: bool) {
+    let pid = pid_of(owner);
     s.menu = Some(MenuWatch {
         since: Instant::now(),
         seen: false,
+        keep_open,
+        pid,
+        at,
+        baseline: pid.map(visible_windows).unwrap_or_default(),
+        fast: true,
     });
-    let _ = wnd.hwnd().SetTimer(MENU_TIMER, 250, None);
+    let _ = wnd.hwnd().SetTimer(MENU_TIMER, POPUP_POLL_MS, None);
 }
 
 impl State {
@@ -1069,7 +1160,9 @@ fn run(
         let (hide, state) = (hide.clone(), state.clone());
         move |p| {
             // The menu of a tray icon takes the focus: the launcher stays until it closes.
-            if p.event == co::WA::INACTIVE && state.borrow().menu.is_none() {
+            if p.event == co::WA::INACTIVE
+                && !state.borrow().menu.as_ref().is_some_and(|m| m.keep_open)
+            {
                 hide();
             }
             Ok(())
@@ -1083,10 +1176,27 @@ fn run(
         move || {
             let mut s = state.borrow_mut();
             let hwnd = wnd.hwnd();
+            let fix = s.config().fix_popups;
             let Some(watch) = s.menu.as_mut() else {
                 let _ = hwnd.KillTimer(MENU_TIMER);
                 return Ok(());
             };
+            let fixing = fix && watch.since.elapsed() < FIX_WINDOW;
+            if fixing && let Some(pid) = watch.pid {
+                move_corner_popups(pid, &watch.baseline, watch.at);
+            }
+            if watch.fast && !fixing {
+                watch.fast = false;
+                let _ = hwnd.SetTimer(MENU_TIMER, MENU_POLL_MS, None);
+            }
+            if !watch.keep_open {
+                // The launcher has closed: only the popup is left to watch.
+                if !fixing {
+                    s.menu = None;
+                    let _ = hwnd.KillTimer(MENU_TIMER);
+                }
+                return Ok(());
+            }
             if !hwnd.IsWindowVisible() {
                 s.menu = None;
                 let _ = hwnd.KillTimer(MENU_TIMER);
@@ -1153,11 +1263,12 @@ fn run(
                 Picked::Done(event) => {
                     let events = s.events.clone();
                     drop(s);
-                    if let LauncherEvent::Tray { click, .. } = &event {
+                    if let LauncherEvent::Tray { key, click, at } = &event {
                         // So the app can show its window or menu in front.
                         tile_hook::notify::allow_foreground();
-                        if *click == Click::Right {
-                            watch_menu(&wnd, &mut state.borrow_mut());
+                        let keep_open = *click == Click::Right;
+                        watch_menu(&wnd, &mut state.borrow_mut(), key.hwnd, *at, keep_open);
+                        if keep_open {
                             let _ = events.send(event);
                             return;
                         }
@@ -1190,19 +1301,16 @@ fn run(
                 return;
             };
             let at = w::GetCursorPos().map_or((0, 0), |p| (p.x, p.y));
-            let event = LauncherEvent::Tray {
-                key: item.key,
-                click,
-                at,
-            };
+            let key = item.key;
+            let event = LauncherEvent::Tray { key, click, at };
             let events = s.events.clone();
             drop(s);
             // So the app can show its window or menu in front.
             tile_hook::notify::allow_foreground();
-            if click == Click::Right {
-                // Its menu opens over the launcher, which stays until the menu closes.
-                watch_menu(&wnd, &mut state.borrow_mut());
-            } else {
+            // A right click's menu opens over the launcher, which stays until it closes.
+            let keep_open = click == Click::Right;
+            watch_menu(&wnd, &mut state.borrow_mut(), key.hwnd, at, keep_open);
+            if !keep_open {
                 hide();
             }
             let _ = events.send(event);
