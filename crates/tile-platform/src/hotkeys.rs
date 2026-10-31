@@ -60,6 +60,7 @@ pub struct Hotkeys {
     table: Arc<RwLock<Vec<Binding>>>,
     paused: Arc<AtomicBool>,
     report_typing: Arc<AtomicBool>,
+    disable_start_menu: Arc<AtomicBool>,
 }
 
 /// Matches key presses against the bind table, on the hook thread.
@@ -68,6 +69,8 @@ struct Matcher {
     tx: mpsc::UnboundedSender<HotkeyEvent>,
     /// The modifiers each held key was pressed with, and when it was last seen.
     chords: HashMap<u16, (Modifiers, Instant)>,
+    /// Win releases we sent ourselves and have yet to see come back through the hook.
+    own_releases: u32,
 }
 
 /// Auto-repeat of a held key arrives within this long of the last one.
@@ -104,7 +107,15 @@ fn held() -> Modifiers {
 
 impl Handler for Matcher {
     fn key(&mut self, key: RawKey) -> Decision {
-        if !key.down && matches!(key.vk, LWIN | RWIN) && WIN_USED.swap(false, Ordering::Relaxed) {
+        let win_up = !key.down && matches!(key.vk, LWIN | RWIN);
+        if win_up && self.own_releases > 0 {
+            self.own_releases -= 1;
+            return Decision::Pass;
+        }
+        if win_up
+            && (WIN_USED.swap(false, Ordering::Relaxed)
+                || self.hotkeys.disable_start_menu.load(Ordering::Relaxed))
+        {
             // Windows opens Start when Win goes up with no other key since it went down. Hold
             // the real release back, press a key that does nothing, then send the release, so
             // the order is guaranteed.
@@ -124,6 +135,7 @@ impl Handler for Matcher {
             ]);
             // If nothing was sent, let the real release through rather than stick Win down.
             return if sent == 3 {
+                self.own_releases += 1;
                 Decision::Block
             } else {
                 Decision::Pass
@@ -191,11 +203,13 @@ impl Hotkeys {
             table: Arc::new(RwLock::new(Vec::new())),
             paused: Arc::new(AtomicBool::new(false)),
             report_typing: Arc::new(AtomicBool::new(false)),
+            disable_start_menu: Arc::new(AtomicBool::new(false)),
         };
         let matcher = Matcher {
             hotkeys: hotkeys.clone(),
             tx,
             chords: HashMap::new(),
+            own_releases: 0,
         };
         tile_hook::spawn("hotkey hook", move || matcher)?;
         Ok(hotkeys)
@@ -231,6 +245,11 @@ impl Hotkeys {
 
     pub fn set_paused(&self, paused: bool) {
         self.paused.store(paused, Ordering::Relaxed);
+    }
+
+    /// Stops releasing Win on its own from opening the Start menu (or allows it again).
+    pub fn set_disable_start_menu(&self, disable: bool) {
+        self.disable_start_menu.store(disable, Ordering::Relaxed);
     }
 
     /// Sends [`HotkeyEvent::Typed`] for typed keys from now on (or stops).

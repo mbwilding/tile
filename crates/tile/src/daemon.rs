@@ -594,6 +594,8 @@ impl Daemon {
         for error in self.hotkeys.set_binds(&binds) {
             tracing::error!("{error}");
         }
+        self.hotkeys
+            .set_disable_start_menu(self.loaded.config.general.disable_start_menu);
     }
 
     fn reload(&mut self) {

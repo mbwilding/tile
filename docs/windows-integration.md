@@ -53,6 +53,12 @@ stops, even after a crash or kill. If that policy is admin-only on your machine 
 run as administrator, it asks once through UAC to let your account manage that single registry
 key. With `override_win_l: false`, Win+L locks as usual and binds to it are skipped.
 
+## Start menu
+
+Windows opens Start when Win is released with no other key pressed in between. With
+`disable_start_menu: true`, Tile presses a key that does nothing just before the release, so Start
+stays closed. Win combos, binds and the `launcher` dispatcher are unaffected. It is off by default.
+
 ## Click to Do
 
 On Copilot+ PCs, holding Win shows Click to Do's glow around the pointer. Tile switches it off

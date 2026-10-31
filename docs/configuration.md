@@ -45,6 +45,7 @@ or contains `: ` or ` #`, and around numbers meant as text (`"2"`).
 | `decorations` | `false` | Keep title bars on tiled windows. Floating windows always keep theirs; a rule can override this per app. |
 | `override_win_l` | `true` | Take over Win+L so it can be bound. See [Windows integration](windows-integration.md). |
 | `disable_click_to_do` | `true` | Switch off Click to Do, whose glow shows whenever Win is held (Copilot+ PCs). |
+| `disable_start_menu` | `false` | Releasing Win on its own doesn't open the Start menu. Win combos and binds are unaffected. See [Windows integration](windows-integration.md). |
 
 ### `theme`
 
@@ -210,6 +211,7 @@ general:
   decorations: false            # keep title bars on tiled windows
   override_win_l: true          # take over Win+L
   disable_click_to_do: true     # switch off Click to Do
+  disable_start_menu: false     # Win on its own doesn't open Start
 
 # Shared by the borders, the launcher and the workspace indicator, unless they set their own.
 theme:

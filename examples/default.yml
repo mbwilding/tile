@@ -16,6 +16,7 @@ general:
   decorations: false # keep title bars on tiled windows
   override_win_l: true # take over Win+L
   disable_click_to_do: true # switch off Click to Do
+  disable_start_menu: false # Win on its own doesn't open Start
 
 # Shared by the borders, the launcher and the workspace indicator, unless they set their own.
 theme:

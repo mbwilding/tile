@@ -1,4 +1,7 @@
 ---
+general:
+  disable_start_menu: true
+
 tray:
   tile: true
   remap: false

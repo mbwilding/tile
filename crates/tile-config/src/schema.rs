@@ -286,6 +286,9 @@ pub struct General {
     /// Switch off Windows' Click to Do (Copilot+ PCs): holding Win would otherwise glow around
     /// the pointer. It stays off after Tile exits; turn it back on in Settings.
     pub disable_click_to_do: bool,
+    /// Releasing Win on its own no longer opens the Start menu. Win combos and binds are
+    /// unaffected.
+    pub disable_start_menu: bool,
 }
 
 impl Default for General {
@@ -305,6 +308,7 @@ impl Default for General {
             decorations: false,
             override_win_l: true,
             disable_click_to_do: true,
+            disable_start_menu: false,
         }
     }
 }
