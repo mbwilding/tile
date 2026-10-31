@@ -259,30 +259,48 @@ pub enum CommandEntry {
     },
     /// Run a dispatcher that takes no argument.
     Name(&'static str),
+    /// A known dispatcher whose arguments don't parse yet: shows its usage and the error.
+    Invalid {
+        name: &'static str,
+        args: &'static str,
+        error: String,
+    },
     /// Run the text as a command line, like the Run dialog.
     Shell(String),
 }
 
 /// The rows for command-mode text `text`: a dispatcher it parses as, then dispatchers whose
-/// name starts with its first word, then running it as a command line.
+/// name starts with its first word (or its usage if the arguments are incomplete), then running
+/// it as a command line.
 pub fn commands(text: &str) -> Vec<CommandEntry> {
     let text = text.trim();
     if text.is_empty() {
         return DISPATCHERS.iter().map(|&(n, a)| entry(n, a)).collect();
     }
     let mut out = Vec::new();
+    let word = text
+        .split_whitespace()
+        .next()
+        .unwrap_or_default()
+        .to_lowercase();
     match text.parse::<Command>() {
         Ok(command) => out.push(CommandEntry::Dispatch(command)),
-        Err(_) if !text.contains(char::is_whitespace) => {
-            let word = text.to_lowercase();
-            out.extend(
-                DISPATCHERS
-                    .iter()
-                    .filter(|(n, _)| n.starts_with(&word) && *n != word)
-                    .map(|&(n, a)| entry(n, a)),
-            );
+        Err(error) => {
+            if let Some(&(name, args)) = DISPATCHERS.iter().find(|(n, _)| *n == word) {
+                out.push(CommandEntry::Invalid {
+                    name,
+                    args,
+                    error: error.to_string(),
+                });
+            } else if !text.contains(char::is_whitespace) {
+                out.extend(
+                    DISPATCHERS
+                        .iter()
+                        .filter(|(n, _)| n.starts_with(&word))
+                        .map(|&(n, a)| entry(n, a)),
+                );
+            }
         }
-        Err(_) => {}
     }
     out.push(CommandEntry::Shell(text.to_owned()));
     out
@@ -407,6 +425,18 @@ mod tests {
         assert_eq!(usage.recent.len(), RECENT_LEN);
         assert_eq!(usage.recent[0], "25");
         assert_eq!(usage.recent.iter().filter(|r| *r == "25").count(), 1);
+    }
+
+    #[test]
+    fn known_dispatchers_with_bad_arguments_show_their_usage() {
+        for text in ["layout", "layout mas"] {
+            let rows = commands(text);
+            assert!(matches!(
+                rows[0],
+                CommandEntry::Invalid { name: "layout", .. }
+            ));
+            assert_eq!(rows[1], CommandEntry::Shell(text.into()));
+        }
     }
 
     #[test]

@@ -417,6 +417,7 @@ impl State {
                 Ok(command) => LauncherEvent::Dispatch(command),
                 Err(_) => return Picked::Nothing,
             },
+            Some(Row::Command(CommandEntry::Invalid { .. })) => return Picked::Nothing,
             Some(Row::Command(CommandEntry::Shell(line))) => LauncherEvent::Run(line),
             Some(Row::Command(CommandEntry::Complete { name, .. })) => {
                 let text = format!("{}{name} ", self.config().command_prefix);
@@ -444,6 +445,11 @@ impl State {
             Row::Command(CommandEntry::Complete { name, args }) => (
                 format!("{name} {args}"),
                 "Tile dispatcher: Enter to add the argument".into(),
+                None,
+            ),
+            Row::Command(CommandEntry::Invalid { name, args, error }) => (
+                format!("{name} {args}").trim_end().to_owned(),
+                format!("Tile dispatcher: {error}"),
                 None,
             ),
             Row::Command(CommandEntry::Shell(line)) => (line.clone(), "Run command".into(), None),
