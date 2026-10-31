@@ -1,60 +1,13 @@
-//! A Dvorak home-row-mods setup (nona's keyd config), driven through the engine.
+//! The remap layers of `examples/mbwilding.yml` (a Dvorak home-row-mods setup), driven through
+//! the engine.
+
+use std::path::Path;
 
 use tile_remap::{Engine, Key, KeyEvent, Out};
 
-const LAYERS: &str = r#"remap:
-  layers:
-    main:
-      '/': 'overloadt(alt, /, 200)'
-      ';': 'overloadt(control, ;, 200)'
-      a: overloadt(control, a, 200)
-      backspace: noop
-      capslock: overload(capslock, backspace)
-      f: overloadt(numbers, f, 200)
-      l: overloadt(meta, l, 200)
-      leftshift: esc
-      m: overloadt(fkeys, m, 200)
-      s: overloadt(meta, s, 200)
-      space: overload(shift, space)
-      z: overloadt(alt, z, 200)
-    'capslock:C':
-      c: down
-      j: left
-      p: right
-      v: up
-    capslock+shift:
-      c: C-down
-      j: C-left
-      p: C-right
-      v: C-up
-    fkeys:
-      a: f5
-      c: f11
-      d: f7
-      e: f3
-      f: f8
-      q: f1
-      r: f4
-      s: f6
-      v: f12
-      w: f2
-      x: f10
-      z: f9
-    numbers:
-      ',': '2'
-      '.': '3'
-      ';': '0'
-      i: '8'
-      j: '4'
-      k: '5'
-      l: '6'
-      m: '1'
-      o: '9'
-      u: '7'
-"#;
-
 fn engine() -> Engine {
-    Engine::new(tile_config::Loaded::parse(LAYERS).unwrap().remap)
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/mbwilding.yml");
+    Engine::new(tile_config::Loaded::load(&path).unwrap().remap)
 }
 
 /// Feeds `events` (`"+a@0"` presses `a` at 0ms, `"-a@50"` releases it, `"tick@200"`
