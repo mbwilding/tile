@@ -39,6 +39,32 @@ pub enum ConfigError {
     LauncherHide(String),
 }
 
+impl ConfigError {
+    /// A one-line form for the tray: serde's list of every expected field is cut, and the line
+    /// number is kept.
+    pub fn summary(&self) -> String {
+        match self {
+            Self::Yaml(e) => {
+                let text = e.to_string();
+                let message = text.split(", expected").next().unwrap_or(&text);
+                let message = message
+                    .rsplit_once(" at line ")
+                    .map_or(message, |(message, _)| message);
+                match e.location() {
+                    Some(at) => format!("{message} (line {})", at.line()),
+                    None => message.to_owned(),
+                }
+            }
+            Self::Remap(errors) => match errors.as_slice() {
+                [only] => format!("remap: {only}"),
+                [first, rest @ ..] => format!("remap: {first} (+{} more)", rest.len()),
+                [] => "remap".to_owned(),
+            },
+            other => other.to_string(),
+        }
+    }
+}
+
 /// A validated configuration, ready to use.
 #[derive(Debug, Clone)]
 pub struct Loaded {
@@ -247,6 +273,22 @@ pub fn write_tray(path: &Path, tray: &Tray) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn yaml_error_summary_is_one_short_line() {
+        let Err(e) = Loaded::parse(
+            "general:
+  tilin: true
+",
+        ) else {
+            panic!("an unknown field should not load");
+        };
+        let summary = e.summary();
+        assert!(summary.contains("unknown field `tilin`"), "{summary}");
+        assert!(summary.ends_with("(line 2)"), "{summary}");
+        assert!(!summary.contains("expected"), "{summary}");
+        assert!(summary.len() < 80, "{summary}");
+    }
+
     use super::*;
 
     #[test]

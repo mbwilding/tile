@@ -141,10 +141,7 @@ impl Items {
             Some(e) => {
                 self.error
                     .set_text(format!("Config error: {}", truncate(e, MENU_ERROR_LEN)));
-                truncate(
-                    &format!("Tile: config error, using the last good config\n{e}"),
-                    TOOLTIP_LEN,
-                )
+                truncate(&format!("Tile: config error\n{e}"), TOOLTIP_LEN)
             }
             None => "Tile".to_owned(),
         };

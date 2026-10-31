@@ -626,7 +626,7 @@ impl Daemon {
             }
             Err(e) => {
                 tracing::error!("keeping previous config: {e}");
-                self.tray.set_config_error(Some(e.to_string()));
+                self.tray.set_config_error(Some(e.summary()));
             }
         }
     }

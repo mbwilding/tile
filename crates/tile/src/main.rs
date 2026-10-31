@@ -87,7 +87,7 @@ fn main() -> anyhow::Result<()> {
         Ok(loaded) => (loaded, None),
         Err(e) => {
             tracing::error!("{e}; using the built-in defaults");
-            (Loaded::defaults(), Some(e.to_string()))
+            (Loaded::defaults(), Some(e.summary()))
         }
     };
 
