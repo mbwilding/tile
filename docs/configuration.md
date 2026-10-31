@@ -52,7 +52,7 @@ startup, so you rarely need to edit them.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `tile` | `false` | The window manager is on (the tray's Tile item). Off until switched on. |
+| `tile` | `true` | The window manager is on (the tray's Tile item). |
 | `remap` | `false` | The key remapper is on (the tray's Remap item). Off until switched on. |
 | `logging` | `false` | Log to the log file (the tray's Logging item). |
 
@@ -141,7 +141,7 @@ general:
 
 # The tray's switches. Tile saves these when you change them in the tray.
 tray:
-  tile: false                   # window manager on (starts off)
+  tile: true                    # window manager on
   remap: false                  # key remapper on (starts off)
   logging: false
 

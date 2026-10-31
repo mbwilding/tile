@@ -207,15 +207,25 @@ impl Default for General {
 }
 
 /// The tray's switches, saved here whenever they are changed so they survive a restart.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Tray {
-    /// Window management is on. Off until switched on.
+    /// Window management is on.
     pub tile: bool,
     /// Key remapping is on. Off until switched on.
     pub remap: bool,
     /// Logging to the log file is on.
     pub logging: bool,
+}
+
+impl Default for Tray {
+    fn default() -> Self {
+        Self {
+            tile: true,
+            remap: false,
+            logging: false,
+        }
+    }
 }
 
 /// The mouse pointer.

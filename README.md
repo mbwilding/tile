@@ -35,8 +35,8 @@ cargo build --release --workspace    # builds tile.exe and tilectl.exe
 .\target\release\tilectl install     # install and start Tile (one UAC prompt)
 ```
 
-Then tick **Tile** (and **Remap**, to remap keys) in the tray icon, or press `Win+Shift+P`. They
-start off the first time; launch and close keys work either way. Try:
+Tile starts tiling straight away. Tick **Remap** in the tray icon to remap keys, and untick
+**Tile** (or press `Win+Shift+P`) to pause tiling; launch and close keys work either way. Try:
 
 | Keys | Action |
 | --- | --- |

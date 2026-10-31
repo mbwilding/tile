@@ -14,8 +14,8 @@ How Tile fits in with Windows, and what it changes.
 ## The tray
 
 Tile and Remap switch the window manager and the key remapper on or off on their own, and are
-remembered across restarts in the config's `tray` section. Both start off. Launch and close
-binds work either way. The tray
+remembered across restarts in the config's `tray` section. Tile starts on and Remap off. Launch
+and close binds work either way. The tray
 also reloads and opens the config, switches logging on or off (nothing is logged until then, or
 until `--log` is passed: `tile.exe --log tile=debug` logs every keybind it handles), opens the
 logs and quits.
