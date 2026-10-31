@@ -4,7 +4,7 @@ tray:
   remap: false
   logging: false
 
-launcher:
+theme:
   font: NeoSpleen
 
 binds:

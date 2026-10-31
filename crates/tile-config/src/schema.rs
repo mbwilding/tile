@@ -8,6 +8,7 @@ use tile_core::{LayoutKind, LayoutSettings, animation::Bezier, layout::CenterMod
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
     pub general: General,
+    pub theme: Theme,
     pub cursor: Cursor,
     pub tray: Tray,
     pub animations: Animations,
@@ -16,6 +17,7 @@ pub struct Config {
     pub scrolling: Scrolling,
     pub remap: Remap,
     pub launcher: Launcher,
+    pub workspace_indicator: WorkspaceIndicator,
     /// `super+shift+q: killactive`, added to (or overriding) the default binds unless
     /// `general.default_binds` is off. An empty value unbinds a default.
     pub binds: BTreeMap<String, Option<String>>,
@@ -125,6 +127,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             general: General::default(),
+            theme: Theme::default(),
             cursor: Cursor::default(),
             tray: Tray::default(),
             animations: Animations::default(),
@@ -133,6 +136,7 @@ impl Default for Config {
             scrolling: Scrolling::default(),
             remap: Remap::default(),
             launcher: Launcher::default(),
+            workspace_indicator: WorkspaceIndicator::default(),
             binds: BTreeMap::new(),
             rules: default_rules(),
         }
@@ -154,6 +158,101 @@ impl Config {
             independent_workspaces: self.general.independent_workspaces,
         }
     }
+
+    /// The focused window's border colour.
+    pub fn border_active(&self) -> Color {
+        self.general.border_active.unwrap_or(self.theme.accent)
+    }
+
+    /// Every other tiled window's border colour.
+    pub fn border_inactive(&self) -> Color {
+        self.general.border_inactive.unwrap_or(self.theme.inactive)
+    }
+
+    /// The launcher's look, with `theme` filling in what it leaves unset.
+    pub fn launcher_style(&self) -> LauncherStyle {
+        let (theme, l) = (&self.theme, &self.launcher);
+        LauncherStyle {
+            font: l.font.clone().unwrap_or_else(|| theme.font.clone()),
+            corners: l.corners.unwrap_or(theme.corners),
+            background: l.background.unwrap_or(theme.background),
+            border: l.border.unwrap_or(theme.accent),
+            foreground: l.foreground.unwrap_or(theme.foreground),
+            dimmed: l.dimmed.unwrap_or(theme.dimmed),
+            selected: l.selected.unwrap_or(theme.accent),
+            selected_foreground: l.selected_foreground.unwrap_or(theme.accent_foreground),
+        }
+    }
+
+    /// The workspace indicator's look, with `theme` filling in what it leaves unset.
+    pub fn indicator_style(&self) -> IndicatorStyle {
+        let (theme, i) = (&self.theme, &self.workspace_indicator);
+        IndicatorStyle {
+            font: i.font.clone().unwrap_or_else(|| theme.font.clone()),
+            corners: i.corners.unwrap_or(theme.corners),
+            background: i.background.unwrap_or(theme.accent),
+            foreground: i.foreground.unwrap_or(theme.accent_foreground),
+        }
+    }
+}
+
+/// The font, corners and colours shared by everything Tile draws, unless its own section
+/// sets them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Theme {
+    pub font: String,
+    pub corners: Corners,
+    /// The launcher's window.
+    pub background: Color,
+    /// Text.
+    pub foreground: Color,
+    /// Secondary text.
+    pub dimmed: Color,
+    /// The focused window's border, the launcher's outline and selected row, and the workspace
+    /// indicator.
+    pub accent: Color,
+    /// Text on `accent`.
+    pub accent_foreground: Color,
+    /// The border of tiled windows without focus.
+    pub inactive: Color,
+}
+
+impl Default for Theme {
+    fn default() -> Self {
+        Self {
+            font: "Segoe UI".into(),
+            corners: Corners::Round,
+            background: Color::rgb(0x1e, 0x1e, 0x2e),
+            foreground: Color::rgb(0xcd, 0xd6, 0xf4),
+            dimmed: Color::rgb(0x7f, 0x84, 0x9c),
+            accent: Color::rgb(0x89, 0xb4, 0xfa),
+            accent_foreground: Color::rgb(0x1e, 0x1e, 0x2e),
+            inactive: Color::rgb(0x45, 0x47, 0x5a),
+        }
+    }
+}
+
+/// The launcher's font, corners and colours, resolved against `theme`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LauncherStyle {
+    pub font: String,
+    pub corners: Corners,
+    pub background: Color,
+    pub border: Color,
+    pub foreground: Color,
+    pub dimmed: Color,
+    pub selected: Color,
+    pub selected_foreground: Color,
+}
+
+/// The workspace indicator's font, corners and colours, resolved against `theme`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IndicatorStyle {
+    pub font: String,
+    pub corners: Corners,
+    pub background: Color,
+    pub foreground: Color,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -174,8 +273,10 @@ pub struct General {
     pub independent_workspaces: bool,
     pub layout: LayoutKind,
     pub borders: bool,
-    pub border_active: Color,
-    pub border_inactive: Color,
+    /// Unset follows `theme.accent`.
+    pub border_active: Option<Color>,
+    /// Unset follows `theme.inactive`.
+    pub border_inactive: Option<Color>,
     pub focus_new_windows: bool,
     /// Keep title bars on tiled windows.
     pub decorations: bool,
@@ -198,8 +299,8 @@ impl Default for General {
             independent_workspaces: true,
             layout: LayoutKind::Master,
             borders: true,
-            border_active: Color::rgb(0x89, 0xb4, 0xfa),
-            border_inactive: Color::rgb(0x45, 0x47, 0x5a),
+            border_active: None,
+            border_inactive: None,
             focus_new_windows: true,
             decorations: false,
             override_win_l: true,
@@ -374,22 +475,26 @@ pub struct Launcher {
     pub pinned: Vec<String>,
     /// Regexes (case-insensitive) on the app name or id; matching apps are never listed.
     pub hide: Vec<String>,
-    pub font: String,
+    /// Unset follows `theme.font`.
+    pub font: Option<String>,
     /// Font size in points.
     pub font_size: u32,
-    pub corners: Corners,
+    /// Unset follows `theme.corners`.
+    pub corners: Option<Corners>,
     /// How opaque the whole window is, from 0.1 to 1.0.
     pub opacity: f32,
-    pub background: Color,
-    /// The window's outline (Windows 11).
-    pub border: Color,
-    pub foreground: Color,
-    /// The app id line and the placeholder.
-    pub dimmed: Color,
-    /// The selected row.
-    pub selected: Color,
-    /// Text on the selected row.
-    pub selected_foreground: Color,
+    /// Unset follows `theme.background`.
+    pub background: Option<Color>,
+    /// The window's outline (Windows 11). Unset follows `theme.accent`.
+    pub border: Option<Color>,
+    /// Unset follows `theme.foreground`.
+    pub foreground: Option<Color>,
+    /// The app id line and the placeholder. Unset follows `theme.dimmed`.
+    pub dimmed: Option<Color>,
+    /// The selected row. Unset follows `theme.accent`.
+    pub selected: Option<Color>,
+    /// Text on the selected row. Unset follows `theme.accent_foreground`.
+    pub selected_foreground: Option<Color>,
     /// Shown in the empty search box, with `{prefix}` replaced by `command_prefix`. Empty shows
     /// `Search apps or equations, <prefix> for commands`, leaving out what is switched off.
     pub placeholder: String,
@@ -435,16 +540,16 @@ impl Default for Launcher {
             ignore_mouse: false,
             pinned: Vec::new(),
             hide: Vec::new(),
-            font: "Segoe UI".into(),
+            font: None,
             font_size: 11,
-            corners: Corners::Round,
+            corners: None,
             opacity: 1.0,
-            background: Color::rgb(0x1e, 0x1e, 0x2e),
-            border: Color::rgb(0x89, 0xb4, 0xfa),
-            foreground: Color::rgb(0xcd, 0xd6, 0xf4),
-            dimmed: Color::rgb(0x7f, 0x84, 0x9c),
-            selected: Color::rgb(0x89, 0xb4, 0xfa),
-            selected_foreground: Color::rgb(0x1e, 0x1e, 0x2e),
+            background: None,
+            border: None,
+            foreground: None,
+            dimmed: None,
+            selected: None,
+            selected_foreground: None,
             placeholder: String::new(),
             calculator: true,
             command_prefix: "!".into(),
@@ -459,6 +564,73 @@ pub enum SearchPosition {
     #[default]
     Top,
     Bottom,
+}
+
+/// The workspace indicator: a small square showing the workspace number that flashes up on the
+/// focused monitor when a `workspace` or `movetoworkspace` dispatcher runs, then fades out.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct WorkspaceIndicator {
+    pub enabled: bool,
+    pub position: IndicatorPosition,
+    /// Pixels between the indicator and the edges of the work area it sits against, at 100%
+    /// scaling. Unused when `position` is `center`.
+    pub gap: u32,
+    /// Width and height in pixels at 100% scaling. It widens for a label that doesn't fit.
+    pub size: u32,
+    /// How long it stays fully shown, in milliseconds.
+    pub duration_ms: u64,
+    /// How long it takes to fade out after that, in milliseconds.
+    pub fade_ms: u64,
+    /// Unset follows `theme.font`.
+    pub font: Option<String>,
+    /// Font size in points.
+    pub font_size: u32,
+    pub bold: bool,
+    /// Unset follows `theme.corners`.
+    pub corners: Option<Corners>,
+    /// How opaque it is when fully shown, from 0.1 to 1.0.
+    pub opacity: f32,
+    /// Unset follows `theme.accent`.
+    pub background: Option<Color>,
+    /// The workspace number. Unset follows `theme.accent_foreground`.
+    pub foreground: Option<Color>,
+}
+
+impl Default for WorkspaceIndicator {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            position: IndicatorPosition::BottomRight,
+            gap: 48,
+            size: 96,
+            duration_ms: 400,
+            fade_ms: 250,
+            font: None,
+            font_size: 36,
+            bold: true,
+            corners: None,
+            opacity: 0.95,
+            background: None,
+            foreground: None,
+        }
+    }
+}
+
+/// Where on the monitor's work area the workspace indicator sits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IndicatorPosition {
+    Center,
+    Top,
+    TopLeft,
+    TopRight,
+    Bottom,
+    BottomLeft,
+    #[default]
+    BottomRight,
+    Left,
+    Right,
 }
 
 /// Window corner rounding (Windows 11).

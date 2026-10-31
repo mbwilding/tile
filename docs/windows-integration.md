@@ -14,12 +14,18 @@ How Tile fits in with Windows, and what it changes.
 
 ## The tray
 
+The menu holds Tile, Remap and Log, then Open logs and Open config, then Quit.
+
 Tile and Remap switch the window manager and the key remapper on or off on their own, and are
 remembered across restarts in the config's `tray` section. Tile starts on and Remap off. Launch
-and close binds work either way. The tray
-also reloads and opens the config, switches logging on or off (nothing is logged until then, or
-until `--log` is passed: `tile.exe --log tile=debug` logs every keybind it handles), opens the
-logs and quits.
+and close binds work either way. Log switches logging on or off (nothing is logged until then, or
+until `--log` is passed: `tile.exe --log tile=debug` logs every keybind it handles).
+
+There is no reload item: Tile reloads the config whenever the file is saved. When the saved file
+has errors, Tile keeps running on the last config that loaded, the tray icon's top left tile
+turns red, its tooltip shows the error, and a **Config error** item at the top of the menu opens
+the config. Saving a fixed file clears it. A broken config at startup does the same, running on
+the built-in defaults. `tilectl check` prints the full error.
 
 Pausing Tile hands every window back as it was: shown, with its title bar and border. Resuming
 starts again from the windows that are open.
@@ -68,6 +74,13 @@ icon from the shell (`IShellItemImageFactory`) and starts apps as `shell:AppsFol
 through the normal-rights helper above. Its window is created hidden at startup, is never tiled
 (Tile leaves its own windows alone) and takes focus the way `focusorexec` does. It closes when it
 loses focus.
+
+## The workspace indicator
+
+The [workspace indicator](configuration.md#workspace_indicator) is a topmost layered popup made
+hidden at startup on its own thread, like the launcher. It is a tool window that can't be
+activated and lets clicks through (`WS_EX_NOACTIVATE`, `WS_EX_TRANSPARENT`), so it never steals
+focus, and Tile never tiles it. It fades by stepping the window's layered alpha on a timer.
 
 ## Secure desktops
 

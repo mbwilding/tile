@@ -15,8 +15,9 @@ use std::{
 pub use keys::{Keybind, Modifiers};
 pub use rules::{RuleOutcome, Rules};
 pub use schema::{
-    Animations, Color, Config, Corners, Cursor, General, Launcher, Remap, Rule, SearchPosition,
-    Tray, default_binds, program,
+    Animations, Color, Config, Corners, Cursor, General, IndicatorPosition, IndicatorStyle,
+    Launcher, LauncherStyle, Remap, Rule, SearchPosition, Theme, Tray, WorkspaceIndicator,
+    default_binds, program,
 };
 pub use watch::watch;
 
@@ -324,6 +325,22 @@ mod tests {
         let loaded = Loaded::parse("general:\n  gaps_in: 2\n").unwrap();
         assert_eq!(loaded.config.general.gaps_in, 2);
         assert_eq!(loaded.config.general.gaps_out, General::default().gaps_out);
+    }
+
+    #[test]
+    fn theme_fills_in_what_sections_leave_unset() {
+        let text = "theme:\n  font: Iosevka\n  accent: \"#ff0000\"\n\
+                    launcher:\n  font: Consolas\n\
+                    workspace_indicator:\n  background: \"#00ff00\"\n";
+        let config = Loaded::parse(text).unwrap().config;
+        let red = Color::rgb(0xff, 0, 0);
+        assert_eq!(config.border_active(), red);
+        let launcher = config.launcher_style();
+        assert_eq!(launcher.font, "Consolas");
+        assert_eq!((launcher.border, launcher.selected), (red, red));
+        let indicator = config.indicator_style();
+        assert_eq!(indicator.font, "Iosevka");
+        assert_eq!(indicator.background, Color::rgb(0, 0xff, 0));
     }
 
     #[test]
