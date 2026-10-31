@@ -15,7 +15,7 @@ use std::{
 pub use keys::{Keybind, Modifiers};
 pub use rules::{RuleOutcome, Rules};
 pub use schema::{
-    Animations, Color, Config, Cursor, General, Hotkey, Remap, Rule, Run, Tray, program,
+    Animations, Color, Config, Cursor, General, Remap, Rule, Tray, default_binds, program,
 };
 pub use watch::watch;
 
@@ -39,8 +39,8 @@ pub enum ConfigError {
 #[derive(Debug, Clone)]
 pub struct Loaded {
     pub config: Config,
+    /// The default binds (unless switched off) with `binds` applied over them.
     pub binds: Vec<(Keybind, Command)>,
-    pub hotkeys: Vec<(Keybind, Hotkey)>,
     pub rules: Rules,
     /// `remap`, compiled for the remapping engine.
     pub remap: tile_remap::Config,
@@ -71,40 +71,34 @@ impl Loaded {
     }
 
     fn from_config(config: Config) -> Result<Self, ConfigError> {
-        let binds = config
-            .binds
-            .iter()
-            .map(|(keys, action)| {
-                let bind = keys
-                    .parse::<Keybind>()
-                    .map_err(|e| ConfigError::Bind(keys.clone(), e))?;
-                let command = action
-                    .parse::<Command>()
-                    .map_err(|e| ConfigError::Bind(keys.clone(), e.to_string()))?;
-                Ok((bind, command))
-            })
-            .collect::<Result<_, ConfigError>>()?;
-        let hotkeys = config
-            .hotkeys
-            .iter()
-            .map(|(keys, action)| {
-                let bind = keys
-                    .parse::<Keybind>()
-                    .map_err(|e| ConfigError::Bind(keys.clone(), e))?;
-                if let Hotkey::App { run, .. } = action
-                    && run.commands().is_empty()
-                {
-                    return Err(ConfigError::Bind(keys.clone(), "`run` is empty".into()));
-                }
-                Ok((bind, action.clone()))
-            })
-            .collect::<Result<_, ConfigError>>()?;
+        let defaults = if config.general.default_binds {
+            default_binds()
+                .into_iter()
+                .map(|(k, v)| (k, Some(v)))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let mut binds: Vec<(Keybind, Command)> = Vec::new();
+        // Matched by the parsed key, so `win+h` overrides the default `super+h`.
+        for (keys, action) in defaults.into_iter().chain(config.binds.clone()) {
+            let bind = keys
+                .parse::<Keybind>()
+                .map_err(|e| ConfigError::Bind(keys.clone(), e))?;
+            binds.retain(|(b, _)| *b != bind);
+            let Some(action) = action.filter(|a| !a.trim().is_empty()) else {
+                continue;
+            };
+            let command = action
+                .parse::<Command>()
+                .map_err(|e| ConfigError::Bind(keys.clone(), e.to_string()))?;
+            binds.push((bind, command));
+        }
         let rules = Rules::compile(&config.rules)?;
         let remap = remap::compile(&config.remap).map_err(ConfigError::Remap)?;
         Ok(Self {
             config,
             binds,
-            hotkeys,
             rules,
             remap,
         })
@@ -197,11 +191,10 @@ fn set_bools(text: &str, section: &str, pairs: &[(&str, bool)]) -> String {
     out
 }
 
-fn tray_pairs(tray: &Tray) -> [(&'static str, bool); 4] {
+fn tray_pairs(tray: &Tray) -> [(&'static str, bool); 3] {
     [
         ("tile", tray.tile),
-        ("key", tray.key),
-        ("hotkey", tray.hotkey),
+        ("remap", tray.remap),
         ("logging", tray.logging),
     ]
 }
@@ -271,7 +264,7 @@ mod tests {
         let path = dir.join("config.yml");
         create_if_missing(&path).unwrap();
         let text = fs::read_to_string(&path).unwrap();
-        assert!(text.contains("tray:") && text.contains("  hotkey: true"));
+        assert!(text.contains("tray:") && text.contains("  remap: false"));
         assert_eq!(Loaded::parse(&text).unwrap().config, Config::default());
         let tray = Tray {
             tile: true,
@@ -285,10 +278,10 @@ mod tests {
     #[test]
     fn set_bools_edits_in_place() {
         let text = "general:\n  gaps_in: 2\n\ntray:  # switches\n    tile: false  # on\n\ncursor:\n  warp: false\n";
-        let out = set_bools(text, "tray", &[("tile", true), ("key", true)]);
+        let out = set_bools(text, "tray", &[("tile", true), ("remap", true)]);
         assert_eq!(
             out,
-            "general:\n  gaps_in: 2\n\ntray:  # switches\n    tile: true  # on\n    key: true\n\ncursor:\n  warp: false\n"
+            "general:\n  gaps_in: 2\n\ntray:  # switches\n    tile: true  # on\n    remap: true\n\ncursor:\n  warp: false\n"
         );
         let out = set_bools("general:\n  tiling: true\n", "tray", &[("tile", true)]);
         assert_eq!(out, "general:\n  tiling: true\n\ntray:\n  tile: true\n");
@@ -327,39 +320,48 @@ mod tests {
     #[test]
     fn win_l_bind_loads_without_override() {
         // The daemon skips it instead, so the default binds stay valid either way.
-        let config = "general:\n  override_win_l: false\nbinds:\n  super+l: movefocus r\n";
+        let config = "general:\n  override_win_l: false\n  default_binds: false\nbinds:\n  super+l: movefocus r\n";
         assert!(Loaded::parse(config).unwrap().binds[0].0.is_win_l());
     }
 
-    #[test]
-    fn built_in_hotkeys() {
-        let loaded = Loaded::defaults();
-        let exe = |key: &str| loaded.config.hotkeys[key].exe();
-        assert_eq!(exe("super+b"), None);
-        assert_eq!(exe("super+t"), None);
-        assert_eq!(exe("super+q"), None);
-        assert_eq!(loaded.hotkeys.len(), 3);
+    fn command(loaded: &Loaded, keys: &str) -> Option<String> {
+        let bind = keys.parse::<Keybind>().unwrap();
+        loaded
+            .binds
+            .iter()
+            .find(|(b, _)| *b == bind)
+            .map(|(_, c)| c.to_string())
     }
 
     #[test]
-    fn hotkey_forms_parse() {
-        let config = r#"hotkeys:
-  super+e: { run: '"C:\Apps\Editor.exe" -n', focus: true }
-  super+m: mail.exe
-  super+c: { run: code.cmd, exe: Code.exe, focus: true }
-  super+t: { run: [wtd.exe -w new, wt.exe -w new] }
-"#;
+    fn binds_merge_over_the_defaults() {
+        let defaults = Loaded::defaults();
+        assert_eq!(defaults.binds.len(), default_binds().len());
+        assert_eq!(command(&defaults, "super+q").as_deref(), Some("killactive"));
+
+        let config = "binds:\n  win+t: exec wtd.exe -w new\n  super+h: ''\n  super+x: focusorexec code.cmd\n";
         let loaded = Loaded::parse(config).unwrap();
-        assert_eq!(loaded.hotkeys.len(), 4);
-        let exe = |key: &str| loaded.config.hotkeys[key].exe();
-        assert_eq!(exe("super+e").as_deref(), Some("Editor.exe"));
-        assert_eq!(exe("super+m"), None);
-        assert_eq!(exe("super+c").as_deref(), Some("Code.exe"));
-        assert_eq!(exe("super+t"), None);
-        let t = &loaded.config.hotkeys["super+t"];
-        assert_eq!(t.commands(), ["wtd.exe -w new", "wt.exe -w new"]);
-        assert!(Loaded::parse("hotkeys:\n  super+x: { run: [] }\n").is_err());
-        assert!(Loaded::parse("hotkeys:\n  hyper+x: x.exe\n").is_err());
+        assert_eq!(
+            command(&loaded, "super+t").as_deref(),
+            Some("exec wtd.exe -w new")
+        );
+        assert_eq!(command(&loaded, "super+h"), None);
+        assert_eq!(
+            command(&loaded, "super+x").as_deref(),
+            Some("focusorexec code.cmd")
+        );
+        assert_eq!(command(&loaded, "super+q").as_deref(), Some("killactive"));
+        assert_eq!(loaded.binds.len(), default_binds().len());
+
+        let unbound = Loaded::parse("binds:\n  super+q: ~\n").unwrap();
+        assert_eq!(command(&unbound, "super+q"), None);
+    }
+
+    #[test]
+    fn default_binds_can_be_switched_off() {
+        let config = "general:\n  default_binds: false\nbinds:\n  super+q: killactive\n";
+        let loaded = Loaded::parse(config).unwrap();
+        assert_eq!(loaded.binds.len(), 1);
     }
 
     #[test]

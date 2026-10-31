@@ -1,11 +1,9 @@
 # Keybinds
 
-Keys come from two config tables:
-
-- `binds` runs a window manager dispatcher. These only work while Tile is on (the tray's Tile
-  item) and are paused with it.
-- `hotkeys` launches, focuses or closes. These work with tiling off, and are switched together
-  by the tray's Hotkey item. See [configuration](configuration.md#hotkeys).
+Keys come from the config's `binds`, which add to the default keys below (see
+[configuration](configuration.md#binds)). Each runs a dispatcher. Most only work while Tile is on
+(the tray's Tile item) and pause with it; the ones marked *always* below also work with tiling off
+or paused.
 
 Bound keys take priority over Windows' own `Win+` shortcuts; unbound ones still reach Windows.
 `Win+Ctrl+Left/Right`, `Win+Ctrl+D` and `Win+Tab` are left to Windows' virtual desktops. Tile
@@ -60,8 +58,9 @@ A `binds` value is `<dispatcher> [arguments]`. `tilectl dispatch` runs the same 
 
 | Dispatcher | Action |
 | --- | --- |
-| `exec <command line>` | run a program |
-| `killactive` | close the active window |
+| `exec <command line>` | *always*: start a program, a new instance every time |
+| `focusorexec <command line>` | *always*: focus a window of the command's program (pressing again moves to the next one), or start it if there is none |
+| `killactive` | *always*: close the focused window, like Alt+F4 |
 | `togglefloating` / `fullscreen` | toggle floating / fullscreen |
 | `movefocus <l\|r\|u\|d>` | focus the nearest window that way, or the nearest one on the next monitor |
 | `movewindow <l\|r\|u\|d>` | move the window that way, to the next monitor at the edge |

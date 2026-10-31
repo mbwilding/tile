@@ -36,8 +36,6 @@ pub enum HotkeyEvent {
     /// A key that is neither a bind nor a lone modifier went down, while typing is reported
     /// ([`Hotkeys::set_report_typing`]).
     Typed,
-    /// The `hotkeys` entry with this index was pressed (and swallowed).
-    Hotkey(usize),
 }
 
 #[derive(Debug, Clone)]
@@ -45,7 +43,7 @@ struct Binding {
     vk: u16,
     modifiers: Modifiers,
     index: usize,
-    /// Still fires while paused (the pause toggle itself).
+    /// Still fires while paused, like `togglepause` and `exec`.
     always: bool,
 }
 
@@ -60,9 +58,6 @@ struct Binding {
 #[derive(Clone)]
 pub struct Hotkeys {
     table: Arc<RwLock<Vec<Binding>>>,
-    /// The `hotkeys` section, switched on and off apart from the binds.
-    extra: Arc<RwLock<Vec<Binding>>>,
-    extra_paused: Arc<AtomicBool>,
     paused: Arc<AtomicBool>,
     report_typing: Arc<AtomicBool>,
 }
@@ -151,21 +146,7 @@ impl Handler for Matcher {
                 .find(|b| b.vk == key.vk && b.modifiers == mods && (b.always || !paused))
                 .map(|b| b.index)
         });
-        let extra = || {
-            if self.hotkeys.extra_paused.load(Ordering::Relaxed) {
-                return None;
-            }
-            self.hotkeys.extra.read().ok().and_then(|t| {
-                t.iter()
-                    .find(|b| b.vk == key.vk && b.modifiers == mods)
-                    .map(|b| b.index)
-            })
-        };
-        let event = match matched {
-            Some(index) => Some(HotkeyEvent::Bind(index)),
-            None => extra().map(HotkeyEvent::Hotkey),
-        };
-        let Some(event) = event else {
+        let Some(event) = matched.map(HotkeyEvent::Bind) else {
             if mods.super_key && !MODIFIER_VKS.contains(&key.vk) {
                 tracing::info!("no bind for vk {:#x} with {mods:?}", key.vk);
             }
@@ -208,8 +189,6 @@ impl Hotkeys {
     pub fn start(tx: mpsc::UnboundedSender<HotkeyEvent>) -> io::Result<Self> {
         let hotkeys = Self {
             table: Arc::new(RwLock::new(Vec::new())),
-            extra: Arc::new(RwLock::new(Vec::new())),
-            extra_paused: Arc::new(AtomicBool::new(false)),
             paused: Arc::new(AtomicBool::new(false)),
             report_typing: Arc::new(AtomicBool::new(false)),
         };
@@ -248,35 +227,6 @@ impl Hotkeys {
             *t = table;
         }
         errors
-    }
-
-    /// Replaces the `hotkeys` section. Returns a message for every key that isn't recognised.
-    pub fn set_hotkeys(&self, keys: &[Keybind]) -> Vec<String> {
-        let mut errors = Vec::new();
-        let table = keys
-            .iter()
-            .enumerate()
-            .filter_map(|(index, bind)| match VKey::from_keyname(&bind.key) {
-                Ok(key) => Some(Binding {
-                    vk: key.to_vk_code(),
-                    modifiers: bind.modifiers,
-                    index,
-                    always: false,
-                }),
-                Err(e) => {
-                    errors.push(format!("hotkey `{bind}`: {e}"));
-                    None
-                }
-            })
-            .collect();
-        if let Ok(mut t) = self.extra.write() {
-            *t = table;
-        }
-        errors
-    }
-
-    pub fn set_hotkeys_paused(&self, paused: bool) {
-        self.extra_paused.store(paused, Ordering::Relaxed);
     }
 
     pub fn set_paused(&self, paused: bool) {

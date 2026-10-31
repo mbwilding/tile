@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, fmt, path::Path, str::FromStr};
+use std::{collections::BTreeMap, fmt, str::FromStr};
 
 use serde::{Deserialize, Serialize};
 use tile_core::{LayoutKind, LayoutSettings, animation::Bezier, layout::CenterMode};
@@ -10,87 +10,15 @@ pub struct Config {
     pub general: General,
     pub cursor: Cursor,
     pub tray: Tray,
-    /// Hotkeys for launching or focusing apps and closing windows; see [`Hotkey`].
-    pub hotkeys: BTreeMap<String, Hotkey>,
     pub animations: Animations,
     pub dwindle: Dwindle,
     pub master: Master,
     pub scrolling: Scrolling,
     pub remap: Remap,
-    /// `super+shift+q: killactive`.
-    pub binds: BTreeMap<String, String>,
+    /// `super+shift+q: killactive`, added to (or overriding) the default binds unless
+    /// `general.default_binds` is off. An empty value unbinds a default.
+    pub binds: BTreeMap<String, Option<String>>,
     pub rules: Vec<Rule>,
-}
-
-/// What a `hotkeys` entry does. They work independently of tiling, and are switched on and
-/// off together by the tray's Hotkey item.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum Hotkey {
-    /// `super+b: chrome.exe`: start the program, a new instance every time.
-    Run(String),
-    /// `{ run: chrome.exe, focus: true }`: focus a window of the program instead if there is
-    /// one. `exe` names the process to look for when it isn't the program `run` starts.
-    App {
-        run: Run,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        exe: Option<String>,
-        /// Focus an existing window of the program rather than starting another. Default off.
-        #[serde(default, skip_serializing_if = "is_false")]
-        focus: bool,
-    },
-    /// `{ close: true }`: close the focused window, like Alt+F4.
-    Close { close: bool },
-}
-
-/// The command line of a [`Hotkey::App`]: one, or a list started one after another, like
-/// `["wt.exe", "notepad.exe"]`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum Run {
-    One(String),
-    All(Vec<String>),
-}
-
-impl Run {
-    /// The command lines in the order they run.
-    pub fn commands(&self) -> &[String] {
-        match self {
-            Self::One(command) => std::slice::from_ref(command),
-            Self::All(commands) => commands,
-        }
-    }
-}
-
-impl Hotkey {
-    /// The command lines to run in order. Empty for [`Hotkey::Close`].
-    pub fn commands(&self) -> &[String] {
-        match self {
-            Self::Run(run) => std::slice::from_ref(run),
-            Self::App { run, .. } => run.commands(),
-            Self::Close { .. } => &[],
-        }
-    }
-
-    /// The process whose window to focus rather than running the commands again: `exe`, or
-    /// else the program of the first command.
-    pub fn exe(&self) -> Option<String> {
-        match self {
-            Self::App {
-                exe: None,
-                focus: true,
-                ..
-            } => self
-                .commands()
-                .first()
-                .and_then(|c| Path::new(program(c)).file_name())
-                .map(|n| n.to_string_lossy().into_owned()),
-            Self::App {
-                exe, focus: true, ..
-            } => exe.clone(),
-            Self::Run(_) | Self::App { .. } | Self::Close { .. } => None,
-        }
-    }
 }
 
 /// The program a command line starts: its first word, or the quoted path it starts with.
@@ -102,23 +30,11 @@ pub fn program(command: &str) -> &str {
     }
 }
 
-fn is_false(value: &bool) -> bool {
-    !*value
-}
-
-fn default_hotkeys() -> BTreeMap<String, Hotkey> {
-    BTreeMap::from([
-        (
-            "super+b".to_string(),
-            Hotkey::Run("chrome.exe --new-window".into()),
-        ),
-        ("super+t".to_string(), Hotkey::Run("wt.exe -w new".into())),
-        ("super+q".to_string(), Hotkey::Close { close: true }),
-    ])
-}
-
-/// Keybinds used when the config has no `binds` section.
+/// The default binds, which `binds` add to unless `general.default_binds` is off.
 const DEFAULT_BINDS: &[(&str, &str)] = &[
+    ("super+b", "exec chrome.exe --new-window"),
+    ("super+t", "exec wt.exe -w new"),
+    ("super+q", "killactive"),
     ("super+enter", "swapwithmaster"),
     ("super+f", "togglefloating"),
     ("super+o", "fullscreen"),
@@ -166,7 +82,8 @@ const DEFAULT_BINDS: &[(&str, &str)] = &[
     ("super+shift+e", "exit"),
 ];
 
-fn default_binds() -> BTreeMap<String, String> {
+/// The default binds, by key.
+pub fn default_binds() -> BTreeMap<String, String> {
     let mut binds: BTreeMap<String, String> = DEFAULT_BINDS
         .iter()
         .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
@@ -209,13 +126,12 @@ impl Default for Config {
             general: General::default(),
             cursor: Cursor::default(),
             tray: Tray::default(),
-            hotkeys: default_hotkeys(),
             animations: Animations::default(),
             dwindle: Dwindle::default(),
             master: Master::default(),
             scrolling: Scrolling::default(),
             remap: Remap::default(),
-            binds: default_binds(),
+            binds: BTreeMap::new(),
             rules: default_rules(),
         }
     }
@@ -243,6 +159,8 @@ impl Config {
 pub struct General {
     /// Manage windows: layouts, `binds` and `rules`. Off, Tile leaves windows alone.
     pub tiling: bool,
+    /// Start from the default binds, which `binds` add to. Off, only `binds` apply.
+    pub default_binds: bool,
     /// Remap keys with the `remap` layers.
     pub remap: bool,
     /// Space between neighbouring tiled windows.
@@ -271,6 +189,7 @@ impl Default for General {
     fn default() -> Self {
         Self {
             tiling: true,
+            default_binds: true,
             remap: true,
             gaps_in: 10,
             gaps_out: 10,
@@ -288,28 +207,15 @@ impl Default for General {
 }
 
 /// The tray's switches, saved here whenever they are changed so they survive a restart.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Tray {
     /// Window management is on. Off until switched on.
     pub tile: bool,
     /// Key remapping is on. Off until switched on.
-    pub key: bool,
-    /// The `hotkeys` are on.
-    pub hotkey: bool,
+    pub remap: bool,
     /// Logging to the log file is on.
     pub logging: bool,
-}
-
-impl Default for Tray {
-    fn default() -> Self {
-        Self {
-            tile: false,
-            key: false,
-            hotkey: true,
-            logging: false,
-        }
-    }
 }
 
 /// The mouse pointer.

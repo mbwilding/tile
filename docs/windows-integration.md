@@ -13,8 +13,9 @@ How Tile fits in with Windows, and what it changes.
 
 ## The tray
 
-Tile, Key and Hotkey switch the window manager, the key remapper and the `hotkeys` on or off on
-their own, and are remembered across restarts in the config's `tray` section. Tile and Key start off; Hotkey starts on. The tray
+Tile and Remap switch the window manager and the key remapper on or off on their own, and are
+remembered across restarts in the config's `tray` section. Both start off. Launch and close
+binds work either way. The tray
 also reloads and opens the config, switches logging on or off (nothing is logged until then, or
 until `--log` is passed: `tile.exe --log tile=debug` logs every keybind it handles), opens the
 logs and quits.
@@ -56,9 +57,8 @@ set `disable_click_to_do: false` and turn it on in Settings, Privacy & security,
 A program running without admin rights can't move admin windows or see keys pressed in them. The
 installed Tile runs as administrator, so it manages them like any other window. A Tile started by
 hand without admin rights (e.g. `cargo run`) leaves them alone, and its keybinds and remapping
-don't work while one has focus. Programs Tile starts (`exec` binds and `hotkeys`) go through a
-launcher running with your normal rights, so they don't run as administrator. A `hotkeys` entry
-with a list of commands starts them all in order, without waiting for any to finish.
+don't work while one has focus. Programs Tile starts (`exec` and `focusorexec` binds) go through a
+launcher running with your normal rights, so they don't run as administrator.
 
 ## Secure desktops
 

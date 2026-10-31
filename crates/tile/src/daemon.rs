@@ -1,12 +1,12 @@
 use std::{
     collections::{HashMap, HashSet},
     os::windows::process::CommandExt,
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::Duration,
 };
 
 use anyhow::{Context, bail};
-use tile_config::{Hotkey, Loaded};
+use tile_config::Loaded;
 use tile_core::{Command, Effect, LayoutKind, ManageOptions, MonitorInfo, Rect, WindowId};
 use tile_ipc::{Event, Incoming, Query, Request, Response, Server};
 use tile_platform::{
@@ -74,10 +74,8 @@ struct Daemon {
     tray: Tray,
     /// The window manager is paused (tray "Tile").
     paused: bool,
-    /// The key remapper is paused (tray "Key").
+    /// The key remapper is paused (tray "Remap").
     remap_paused: bool,
-    /// The `hotkeys` are paused (tray "Hotkey").
-    hotkey_paused: bool,
     quit: bool,
     /// The window manager is on (`general.tiling`).
     tiling: bool,
@@ -244,8 +242,7 @@ pub async fn run(config_path: PathBuf, loaded: Loaded) -> anyhow::Result<()> {
         drag: None,
         tray,
         paused: !saved.tile,
-        remap_paused: !saved.key,
-        hotkey_paused: !saved.hotkey,
+        remap_paused: !saved.remap,
         quit: false,
         tiling: false,
         remap: None,
@@ -272,12 +269,9 @@ pub async fn run(config_path: PathBuf, loaded: Loaded) -> anyhow::Result<()> {
         cursor_hidden: None,
         cursor_check_at: None,
     };
-    daemon.hotkeys.set_paused(daemon.paused);
     daemon.tray.set_tile_paused(daemon.paused);
-    daemon.tray.set_key_paused(daemon.remap_paused);
-    daemon.tray.set_hotkey_paused(daemon.hotkey_paused);
-    daemon.hotkeys.set_hotkeys_paused(daemon.hotkey_paused);
-    daemon.install_hotkeys();
+    daemon.tray.set_remap_paused(daemon.remap_paused);
+    daemon.install_binds();
     if daemon.loaded.config.general.tiling {
         daemon.start_tiling();
     }
@@ -368,7 +362,6 @@ impl Daemon {
                             self.run_command(command);
                         }
                     }
-                    HotkeyEvent::Hotkey(index) => self.run_hotkey(index),
                     HotkeyEvent::Typed => self.hide_cursor(),
                 },
                 Some(event) = rx.drags.recv() => self.on_drag(event),
@@ -531,12 +524,10 @@ impl Daemon {
         }
     }
 
+    /// Installs the binds. While tiling is off or paused only those that
+    /// [work while paused](Command::works_while_paused) fire.
     fn install_binds(&mut self) {
-        if !self.tiling {
-            self.commands.clear();
-            self.hotkeys.set_binds(&[]);
-            return;
-        }
+        self.hotkeys.set_paused(self.paused || !self.tiling);
         // Without the takeover, Windows would lock *and* run the bind.
         let win_l = self.win_l_available();
         if !win_l && self.loaded.binds.iter().any(|(bind, _)| bind.is_win_l()) {
@@ -552,7 +543,7 @@ impl Daemon {
             .collect();
         let binds: Vec<_> = usable
             .iter()
-            .map(|(bind, command)| (bind.clone(), *command == Command::TogglePause))
+            .map(|(bind, command)| (bind.clone(), command.works_while_paused()))
             .collect();
         self.commands = usable.iter().map(|(_, c)| c.clone()).collect();
         for error in self.hotkeys.set_binds(&binds) {
@@ -571,7 +562,7 @@ impl Daemon {
                     return;
                 }
                 self.loaded = loaded;
-                self.install_hotkeys();
+                self.install_binds();
                 self.update_remap();
                 self.update_cursor();
                 match (self.tiling, self.loaded.config.general.tiling) {
@@ -623,8 +614,8 @@ impl Daemon {
 
     fn set_remap_paused(&mut self, paused: bool) {
         self.remap_paused = paused;
-        self.tray.set_key_paused(paused);
-        settings::update(|s| s.key = !paused);
+        self.tray.set_remap_paused(paused);
+        settings::update(|s| s.remap = !paused);
         if let Some(remap) = &self.remap {
             remap.send(remap::Command::Pause(paused));
         }
@@ -634,7 +625,7 @@ impl Daemon {
     /// Pauses or resumes the window manager (binds, except `togglepause`, included).
     fn set_paused(&mut self, paused: bool) {
         self.paused = paused;
-        self.hotkeys.set_paused(paused);
+        self.hotkeys.set_paused(paused || !self.tiling);
         self.tray.set_tile_paused(paused);
         settings::update(|s| s.tile = !paused);
         self.update_cursor();
@@ -653,52 +644,12 @@ impl Daemon {
         }
     }
 
-    fn set_hotkey_paused(&mut self, paused: bool) {
-        self.hotkey_paused = paused;
-        self.hotkeys.set_hotkeys_paused(paused);
-        self.tray.set_hotkey_paused(paused);
-        settings::update(|s| s.hotkey = !paused);
-        tracing::info!("hotkeys {}", if paused { "paused" } else { "resumed" });
-    }
-
-    fn install_hotkeys(&mut self) {
-        let win_l = self.win_l_available();
-        let keys: Vec<_> = self
-            .loaded
-            .hotkeys
-            .iter()
-            .filter(|(bind, _)| win_l || !bind.is_win_l())
-            .map(|(bind, _)| bind.clone())
-            .collect();
-        for error in self.hotkeys.set_hotkeys(&keys) {
-            tracing::error!("{error}");
-        }
-    }
-
-    /// Runs the `hotkeys` entry the hook matched, by its place among the installed keys.
-    fn run_hotkey(&mut self, index: usize) {
-        let win_l = self.win_l_available();
-        let Some((_, action)) = self
-            .loaded
-            .hotkeys
-            .iter()
-            .filter(|(bind, _)| win_l || !bind.is_win_l())
-            .nth(index)
-        else {
-            return;
-        };
-        if let Hotkey::Close { close } = action {
-            if *close {
-                close_foreground();
-            }
-            return;
-        }
-        let (commands, exe) = (action.commands().to_vec(), action.exe());
-        self.launch_or_focus(&commands, exe);
-    }
-
-    /// Focuses a window of the process `exe` if there is one, otherwise runs `commands` in order.
-    fn launch_or_focus(&mut self, commands: &[String], exe: Option<String>) {
+    /// `focusorexec`: focuses a window of the command's program if there is one, otherwise
+    /// runs the command.
+    fn focus_or_exec(&mut self, command: &str) {
+        let exe = Path::new(tile_config::program(command))
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned());
         if let Some(exe) = exe {
             let current = self.desktops.current_id();
             let focused = self.focused();
@@ -733,7 +684,7 @@ impl Daemon {
                 return;
             }
         }
-        launch::exec_all(commands);
+        launch::exec(command);
     }
 
     /// Takes over or gives back Win+L to match `general.override_win_l` (while tiling).
@@ -832,6 +783,8 @@ impl Daemon {
             Command::TogglePause => self.toggle_pause(),
             Command::Exit => self.quit = true,
             Command::Exec(line) => launch::exec(&line),
+            Command::FocusOrExec(line) => self.focus_or_exec(&line),
+            Command::KillActive => close_foreground(),
             Command::Desktop(target) => vd::switch_desktop(target),
             Command::Lock => self.lock(),
             _ if self.paused || !self.tiling => {}
@@ -1320,8 +1273,7 @@ impl Daemon {
     fn on_tray(&mut self, event: TrayEvent) {
         match event {
             TrayEvent::ToggleTile => self.set_paused(!self.paused),
-            TrayEvent::ToggleKey => self.set_remap_paused(!self.remap_paused),
-            TrayEvent::ToggleHotkey => self.set_hotkey_paused(!self.hotkey_paused),
+            TrayEvent::ToggleRemap => self.set_remap_paused(!self.remap_paused),
             TrayEvent::ToggleLogging => {
                 logging::set_enabled(!logging::enabled());
                 self.tray.set_logging(logging::enabled());

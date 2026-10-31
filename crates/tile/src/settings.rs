@@ -1,4 +1,4 @@
-//! The tray's switches (Tile, Key, Hotkey, logging), kept in the config's `tray` section so
+//! The tray's switches (Tile, Remap, logging), kept in the config's `tray` section so
 //! they survive a restart.
 
 use std::{
