@@ -765,18 +765,72 @@ impl State {
             return Vec::new();
         };
         let tiles = ws.layout.arrange(area, Some(id), &settings);
+        let own = tiles.iter().find(|t| t.id == id);
+        // An edge dragged past its neighbour ends with the pointer over it, so a change of size
+        // is a resize and never a swap; only a window moved at its own size swaps places.
+        let resized =
+            own.is_some_and(|t| (rect.w - t.rect.w).abs() > 2 || (rect.h - t.rect.h).abs() > 2);
         let under = tiles
             .iter()
             .find(|t| t.visible && t.id != id && t.rect.contains_point(cursor.0, cursor.1));
-        if let Some(other) = under {
+        if resized && let Some(own) = own {
+            ws.layout.resize(
+                id,
+                rect.w - own.rect.w,
+                rect.h - own.rect.h,
+                area,
+                &settings,
+            );
+        } else if let Some(other) = under {
             ws.layout.swap(id, other.id);
-        } else if let Some(own) = tiles.iter().find(|t| t.id == id) {
-            let dx = rect.w - own.rect.w;
-            let dy = rect.h - own.rect.h;
-            if dx.abs() > 2 || dy.abs() > 2 {
-                ws.layout.resize(id, dx, dy, area, &settings);
-            }
         }
+        self.sync()
+    }
+
+    /// Resizes the split of a tiled window to the size it has been dragged to. `false` if it
+    /// isn't a tiled window, or is already that size.
+    fn resize_to(&mut self, id: WindowId, rect: Rect) -> bool {
+        let Some(m) = self.windows.get(&id) else {
+            return false;
+        };
+        if m.floating {
+            return false;
+        }
+        let n = m.workspace;
+        let area = self.area_of(n);
+        let settings = self.settings.clone();
+        let Some(ws) = self.workspaces.get_mut(&n) else {
+            return false;
+        };
+        let Some(own) = ws
+            .layout
+            .arrange(area, Some(id), &settings)
+            .into_iter()
+            .find(|t| t.id == id)
+        else {
+            return false;
+        };
+        let (dx, dy) = (rect.w - own.rect.w, rect.h - own.rect.h);
+        if dx.abs() <= 2 && dy.abs() <= 2 {
+            return false;
+        }
+        ws.layout.resize(id, dx, dy, area, &settings);
+        true
+    }
+
+    /// An edge of a tiled window is being dragged: the others fit around the size it has now.
+    /// Empty while its size is unchanged, as in a plain move.
+    pub fn window_resizing(&mut self, id: WindowId, rect: Rect) -> Vec<Effect> {
+        if self.resize_to(id, rect) {
+            self.sync()
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// The edge drag of a tiled window ended: everything settles into its tiles.
+    pub fn window_resized(&mut self, id: WindowId, rect: Rect) -> Vec<Effect> {
+        self.resize_to(id, rect);
         self.sync()
     }
 
@@ -820,6 +874,10 @@ impl State {
             | Command::Launcher
             | Command::Reload
             | Command::TogglePause
+            | Command::ToggleTile
+            | Command::ToggleRemap
+            | Command::ToggleShell
+            | Command::ToggleLog
             | Command::Exit => Vec::new(),
         }
     }
@@ -1442,6 +1500,29 @@ mod tests {
         let effects = s.set_monitors(vec![monitor(1, 0)]);
         assert_eq!(s.monitor_count(), 1);
         assert_eq!(placed(&effects, W), Some(Rect::new(0, 0, 1000, 960)));
+    }
+
+    #[test]
+    fn dragging_an_edge_over_a_neighbour_resizes_instead_of_swapping() {
+        let mut s = state(1);
+        open(&mut s, W);
+        open(&mut s, X);
+        // W's right edge dragged well into X, the pointer ending over X.
+        let effects = s.window_moved(W, Rect::new(0, 0, 700, 960), (690, 400));
+        assert_eq!(placed(&effects, W).map(|r| (r.x, r.w)), Some((0, 700)));
+        assert_eq!(placed(&effects, X).map(|r| r.x), Some(700));
+    }
+
+    #[test]
+    fn dragging_an_edge_moves_the_others_as_it_goes() {
+        let mut s = state(1);
+        open(&mut s, W);
+        open(&mut s, X);
+        assert!(s.window_resizing(W, Rect::new(0, 0, 500, 960)).is_empty());
+        let effects = s.window_resizing(W, Rect::new(0, 0, 600, 960));
+        assert_eq!(placed(&effects, X).map(|r| r.x), Some(600));
+        let settled = s.window_resized(W, Rect::new(0, 0, 600, 960));
+        assert_eq!(placed(&settled, W).map(|r| r.w), Some(600));
     }
 
     #[test]

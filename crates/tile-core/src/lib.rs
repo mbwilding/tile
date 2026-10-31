@@ -11,6 +11,7 @@ pub mod input;
 pub mod layout;
 pub mod search;
 pub mod state;
+pub mod system;
 
 use serde::{Deserialize, Serialize};
 

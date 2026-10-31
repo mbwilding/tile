@@ -84,5 +84,7 @@ A `binds` value is `<dispatcher> [arguments]`. `tilectl dispatch` runs the same 
 | `lock` | lock the computer (works while Win+L is taken over) |
 | `launcher` | *always*: open or close the [app launcher](launcher.md) |
 | `reload` / `togglepause` / `exit` | reload the config / pause both tiling and remapping (or resume both) / quit |
+| `toggletile` / `toggleremap` | pause or resume the window manager / the key remapper on its own, like the tray's Tile and Remap items |
+| `toggleshell` / `togglelog` | switch [shell mode](shell.md) / logging on or off, like the tray's Shell and Log items |
 
 Directions can also be written `left`, `right`, `up` and `down`.

@@ -74,10 +74,20 @@ startup, so you rarely need to edit them.
 | --- | --- | --- |
 | `tile` | `true` | The window manager is on (the tray's Tile item). |
 | `remap` | `false` | The key remapper is on (the tray's Remap item). Off until switched on. |
+| `shell` | `false` | Tile is the shell (the tray's Shell item): it hosts the notification area when no taskbar is running, keeps the launcher bound (to `Win+R`, or `Win+D` if that is taken, when you haven't bound it) and shows the tray icons in a row of their own at its top. See [shell mode](shell.md). Turning it on also makes Tile your sign-in shell in place of Explorer from the next sign-in, and Tile keeps that in step with the file: a config with `shell: true` sets it up the first time Tile runs, and editing it back puts Explorer back. Tile started with `--shell`, which that sign-in shell uses, is the shell whatever this says. |
 | `logging` | `false` | Log to the log file (the tray's Log item). |
 
 These are separate from `general.tiling` and `general.remap`, which switch the features off
 entirely: a feature runs only when both its `general` setting and its tray switch are on.
+
+### `shell`
+
+Tile as the Windows shell, in place of Explorer's taskbar. See [shell mode](shell.md). Whether
+Tile is the shell is the tray's Shell switch, [`tray.shell`](#tray).
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `run_startup` | `true` | When Tile starts as the shell, run the `Run` and `RunOnce` registry keys and the Startup folders, as Explorer would. |
 
 ### `cursor`
 
@@ -137,6 +147,9 @@ The app launcher, opened by the `launcher` dispatcher. See [launcher](launcher.m
 | `placeholder` | `""` | Shown in the empty search box; `{prefix}` becomes `command_prefix`. Empty shows `Search apps or equations, ! for commands` with the real prefix, leaving out the calculator or commands when they are off. |
 | `calculator` | `true` | Show the value of a search that reads as a calculation first; Enter copies it. See [calculator](launcher.md#calculator). |
 | `command_prefix` | `"!"` | Typing this first runs a command line or a Tile dispatcher instead of searching apps. `""` switches it off. See [commands](launcher.md#commands). |
+| `system_items` | `true` | List the system items (volume, network, Wi-Fi, Bluetooth, battery, clock, power) and tray icons that match what is typed, after the apps. See [system items](launcher.md#system-items-and-tray-icons). |
+| `system_prefix` | `"@"` | Typing this first lists every system item and tray icon, narrowed by what follows, even with `system_items` off. `""` switches it off. |
+| `bar` | `true` | Show the bar at the top of the launcher: the time (bold, with seconds) and date, and icon buttons for switch user, log out, lock, restart and shut down. See [the bar](launcher.md#the-bar). |
 
 ### `workspace_indicator`
 
@@ -173,7 +186,7 @@ binds:
   super+z: ~                            # unbind the default Win+Z
 ```
 
-Launching, closing, locking, desktops, `reload`, `togglepause` and `exit` work even with tiling
+Launching, closing, locking, desktops, `reload`, the `toggle*` dispatchers and `exit` work even with tiling
 off or paused; the rest only run while Tile is on (the tray's Tile item). See
 [keybinds](keybinds.md) for the key names and every dispatcher.
 
@@ -228,7 +241,12 @@ theme:
 tray:
   tile: true                    # window manager on
   remap: false                  # key remapper on (starts off)
+  shell: false                  # Tile is the shell: hosts tray icons, keeps the launcher bound
   logging: false
+
+# Tile as the Windows shell; see shell.md.
+shell:
+  run_startup: true             # as the shell, run the Run keys and Startup folders
 
 cursor:
   warp: true                    # move the pointer onto the window a keybind focuses, then hide it
@@ -278,6 +296,9 @@ launcher:
   placeholder: ""                # "" for "Search apps or equations, ! for commands"; {prefix} is the prefix
   calculator: true              # `12 * 3` shows = 36; Enter copies it
   command_prefix: "!"           # run a command line or dispatcher; "" for off
+  system_items: true            # offer volume, network, Wi-Fi, Bluetooth, battery, power and tray icons in results
+  system_prefix: "@"            # lists them all; "" for off
+  bar: true                     # bottom bar: clock, date and power buttons
 
 workspace_indicator:
   enabled: true                 # flash the workspace number when switching

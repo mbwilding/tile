@@ -7,12 +7,16 @@ use std::{
 
 use anyhow::{Context, bail};
 use tile_config::Loaded;
-use tile_core::{Command, Effect, LayoutKind, ManageOptions, MonitorInfo, Rect, WindowId};
+use tile_core::{
+    Command, Effect, LayoutKind, ManageOptions, MonitorInfo, Rect, WindowId,
+    system::{Action, Power},
+};
+use tile_hook::notify::{Host, Registry, taskbar_exists};
 use tile_ipc::{Event, Incoming, Query, Request, Response, Server};
 use tile_platform::{
-    Animation, Discovered, DragEvent, HotkeyEvent, Hotkeys, Indicator, IndicatorSettings, Launcher,
-    LauncherEvent, LauncherSettings, Mover, PlaceError, Tray, TrayEvent, WinDrag, WinEvent,
-    WinEventHooks, Windows, close_foreground, cursor_pos,
+    Animation, Backdrop, Discovered, DragEvent, HotkeyEvent, Hotkeys, Indicator, IndicatorSettings,
+    Launcher, LauncherEvent, LauncherSettings, Mover, PlaceError, Tray, TrayEvent, WinDrag,
+    WinEvent, WinEventHooks, Windows, close_foreground, cursor_pos,
     desktops::{self as vd, DesktopChange, DesktopId},
     focus_desktop, focus_exe, foreground, is_shell_window, monitors, mouse_button_down,
     set_cursor_pos,
@@ -76,6 +80,18 @@ struct Daemon {
     tray: Tray,
     launcher: Launcher,
     indicator: Indicator,
+    /// The tray icons apps have added, while Tile hosts the notification area.
+    registry: Registry,
+    /// The notification area's window, while Tile is the shell and no other taskbar runs.
+    notify_host: Option<Host>,
+    /// Started with `--shell`: act as the shell whatever the tray's Shell switch says.
+    shell_forced: bool,
+    /// The tray's Shell switch.
+    shell_on: bool,
+    /// Said that a taskbar is running so Tile leaves the notification area to it.
+    taskbar_noted: bool,
+    /// The black desktop Tile paints while it hosts the notification area.
+    backdrop: Option<Backdrop>,
     /// The window manager is paused (tray "Tile").
     paused: bool,
     /// The key remapper is paused (tray "Remap").
@@ -92,6 +108,8 @@ struct Daemon {
     tweens: HashMap<WindowId, Tween>,
     /// Windows the user is dragging / resizing with the mouse.
     moving: HashSet<WindowId>,
+    /// Of those, the ones whose edge has been dragged, so the others have been following it.
+    resizing: HashSet<WindowId>,
     pending_show: HashMap<WindowId, (u32, Instant)>,
     pending_hide: HashMap<WindowId, (u32, Instant)>,
     /// Windows excluded by rules or that we can't control (elevated).
@@ -216,6 +234,7 @@ pub async fn run(
     config_path: PathBuf,
     loaded: Loaded,
     config_error: Option<String>,
+    shell_forced: bool,
 ) -> anyhow::Result<()> {
     if tile_ipc::is_running().await {
         bail!("Tile is already running");
@@ -246,10 +265,12 @@ pub async fn run(
     let hotkeys = Hotkeys::start(hotkey_tx).context("failed to install the keyboard hook")?;
     let win_drag = WinDrag::start(drag_tx).context("failed to install the mouse hook")?;
     let tray = Tray::spawn(tray_tx);
+    let registry = Registry::default();
     let launcher = Launcher::spawn(
         launcher_tx,
         launcher_settings(&loaded),
         paths::data_dir().join("launcher.json"),
+        registry.clone(),
     );
     let indicator = Indicator::spawn(indicator_settings(&loaded));
     let _watcher = tile_config::watch(&config_path, move || {
@@ -275,6 +296,12 @@ pub async fn run(
         tray,
         launcher,
         indicator,
+        registry,
+        notify_host: None,
+        shell_forced,
+        shell_on: saved.shell,
+        taskbar_noted: false,
+        backdrop: None,
         paused: !saved.tile,
         remap_paused: !saved.remap,
         quit: false,
@@ -285,6 +312,7 @@ pub async fn run(
         placed: HashMap::new(),
         tweens: HashMap::new(),
         moving: HashSet::new(),
+        resizing: HashSet::new(),
         pending_show: HashMap::new(),
         pending_hide: HashMap::new(),
         ignored: HashSet::new(),
@@ -312,7 +340,14 @@ pub async fn run(
     daemon.update_remap();
     daemon.update_cursor();
     daemon.tray.set_logging(logging::enabled());
+    daemon.tray.set_shell(daemon.shell_wanted());
     daemon.tray.set_config_error(config_error);
+    // The sign-in shell follows the saved switch, so a first run with it on sets it up, and
+    // one with it off puts Explorer back. Started as the shell, it leaves things as they are.
+    if daemon.shell_on || !daemon.shell_forced {
+        daemon.register_shell();
+    }
+    daemon.start_shell();
     tracing::info!("Tile started");
 
     daemon
@@ -408,6 +443,12 @@ impl Daemon {
                     }
                     LauncherEvent::Run(line) => launch::exec(&line),
                     LauncherEvent::Dispatch(command) => self.run_command(command),
+                    LauncherEvent::Tray { key, click, at } => {
+                        if !self.registry.click(key, click, at) {
+                            tracing::debug!("the tray icon has gone");
+                        }
+                    }
+                    LauncherEvent::System(action) => self.run_system(action),
                 },
                 Some(incoming) = rx.ipc.recv() => self.on_ipc(incoming),
                 Some(()) = rx.config.recv() => reload_at = Some(Instant::now() + RELOAD_DEBOUNCE),
@@ -463,6 +504,133 @@ impl Daemon {
         self.launcher.shutdown();
         self.indicator.shutdown();
         self.tray.shutdown();
+        if let Some(host) = self.notify_host.take() {
+            host.stop();
+        }
+        self.restore_backdrop();
+    }
+
+    /// Removes the black windows, so the desktop shows again.
+    fn restore_backdrop(&mut self) {
+        self.backdrop = None;
+    }
+
+    /// Whether Tile acts as the Windows shell: `--shell`, or the tray's Shell switch.
+    fn shell_wanted(&self) -> bool {
+        self.shell_forced || self.shell_on
+    }
+
+    /// The tray's Shell item: flips the saved switch, which then applies like a config edit.
+    fn toggle_shell(&mut self) {
+        let on = !self.shell_on;
+        settings::update(|s| s.shell = on);
+        self.apply_shell(on);
+    }
+
+    /// Makes the Shell switch `on` or off: Windows starts Tile instead of Explorer at the next
+    /// sign-in, Tile hosts the notification area now if no taskbar runs, and the launcher is
+    /// always bound.
+    fn apply_shell(&mut self, on: bool) {
+        self.shell_on = on;
+        self.register_shell();
+        self.tray.set_shell(self.shell_wanted());
+        tracing::info!("shell mode {}", if on { "on" } else { "off" });
+        self.install_binds();
+        self.sync_shell();
+    }
+
+    /// Points the sign-in shell at the switch: Tile when it is on, Explorer when it is off.
+    fn register_shell(&self) {
+        let exe = tile_platform::installed_exe();
+        let result = if !self.shell_on {
+            tile_platform::set_sign_in_shell(None)
+        } else if exe.exists() {
+            tile_platform::set_sign_in_shell(Some(&exe))
+        } else {
+            Err("Tile isn't installed (run `tilectl install`)".to_owned())
+        };
+        if let Err(e) = result {
+            tracing::warn!("couldn't change the sign-in shell, so Explorer still starts: {e}");
+        }
+    }
+
+    /// At startup: hosts the notification area and, when there was no taskbar to begin with,
+    /// starts what Explorer would have at sign-in.
+    fn start_shell(&mut self) {
+        let bare = !taskbar_exists();
+        self.sync_shell();
+        let shell = &self.loaded.config.shell;
+        if self.notify_host.is_none() || !bare || !shell.run_startup {
+            return;
+        }
+        if !tile_platform::first_startup_this_session() {
+            tracing::info!("the sign-in programs were already started this session");
+            return;
+        }
+        let commands = tile_platform::startup_commands();
+        tracing::info!("starting {} sign-in programs", commands.len());
+        for command in commands {
+            tracing::debug!("startup: {command}");
+            launch::exec(&command);
+        }
+    }
+
+    /// Hosts the notification area while Tile is the shell and no other taskbar runs, and lets
+    /// go of it when one appears or Tile stops being the shell.
+    fn sync_shell(&mut self) {
+        if self.notify_host.as_ref().is_some_and(|h| !h.running()) {
+            tracing::info!("another taskbar took over the notification area");
+            self.notify_host = None;
+            self.restore_backdrop();
+        }
+        match (self.shell_wanted(), self.notify_host.is_some()) {
+            (true, false) if taskbar_exists() => {
+                if !self.taskbar_noted {
+                    self.taskbar_noted = true;
+                    tracing::info!("a taskbar is running; the notification area is left to it");
+                }
+            }
+            (true, false) => {
+                self.taskbar_noted = false;
+                self.notify_host = Host::start(self.registry.clone());
+                if self.notify_host.is_some() {
+                    tracing::info!("hosting the notification area");
+                    if self.backdrop.is_none() {
+                        self.backdrop = Backdrop::black();
+                    }
+                } else {
+                    tracing::warn!("couldn't start the notification area");
+                }
+            }
+            (false, true) => {
+                if let Some(host) = self.notify_host.take() {
+                    host.stop();
+                }
+                self.restore_backdrop();
+                tracing::info!("stopped hosting the notification area");
+            }
+            _ => {}
+        }
+    }
+
+    /// Does what a system row of the launcher asks for.
+    fn run_system(&mut self, action: Action) {
+        if action == Action::Power(Power::Lock) {
+            self.run_command(Command::Lock);
+        } else if let Some(line) = tile_platform::system_command_line(action) {
+            launch::exec(&line);
+        } else {
+            let spawned = std::thread::Builder::new()
+                .name("system action".into())
+                .spawn(move || {
+                    if !tile_platform::apply_system_action(action) {
+                        tracing::warn!("couldn't do {action:?}");
+                    }
+                });
+            if let Err(e) = spawned {
+                tracing::warn!("couldn't do {action:?}: {e}");
+            }
+        }
     }
 
     /// Shows the windows we hid and undoes our borders and title bar changes.
@@ -571,6 +739,23 @@ impl Daemon {
 
     /// Installs the binds. While tiling is off or paused only those that
     /// [work while paused](Command::works_while_paused) fire.
+    /// In shell mode the launcher is how everything starts, so it is always bound: a bind of
+    /// yours if there is one, else Win+R or, if that is taken, Win+D.
+    fn shell_launcher_bind(&self) -> Option<(tile_config::Keybind, Command)> {
+        let binds = &self.loaded.binds;
+        if !self.shell_wanted() || binds.iter().any(|(_, c)| *c == Command::Launcher) {
+            return None;
+        }
+        ["super+r", "super+d"].into_iter().find_map(|keys| {
+            let bind: tile_config::Keybind = keys.parse().ok()?;
+            let free = !binds.iter().any(|(b, _)| *b == bind);
+            if free {
+                tracing::info!("shell mode: the launcher is bound to {keys}");
+            }
+            free.then_some((bind, Command::Launcher))
+        })
+    }
+
     fn install_binds(&mut self) {
         self.hotkeys.set_paused(self.paused || !self.tiling);
         // Without the takeover, Windows would lock *and* run the bind.
@@ -580,12 +765,14 @@ impl Daemon {
                 "Win+L binds are skipped: Windows keeps Win+L (see `general.override_win_l`)"
             );
         }
-        let usable: Vec<_> = self
+        let fallback = self.shell_launcher_bind();
+        let mut usable: Vec<_> = self
             .loaded
             .binds
             .iter()
             .filter(|(bind, _)| win_l || !bind.is_win_l())
             .collect();
+        usable.extend(fallback.as_ref());
         let binds: Vec<_> = usable
             .iter()
             .map(|(bind, command)| (bind.clone(), command.works_while_paused()))
@@ -605,17 +792,23 @@ impl Daemon {
                 // Our own save of a tray switch lands here too; nothing else changed.
                 let mut same = loaded.config.clone();
                 same.tray = self.loaded.config.tray.clone();
-                if same == self.loaded.config {
-                    self.loaded = loaded;
+                let unchanged = same == self.loaded.config;
+                let shell = loaded.config.tray.shell;
+                self.loaded = loaded;
+                // The Shell switch follows the config file, whoever edited it.
+                if shell != self.shell_on {
+                    self.apply_shell(shell);
+                }
+                if unchanged {
                     return;
                 }
-                self.loaded = loaded;
                 self.launcher.set_settings(launcher_settings(&self.loaded));
                 self.indicator
                     .set_settings(indicator_settings(&self.loaded));
                 self.install_binds();
                 self.update_remap();
                 self.update_cursor();
+                self.sync_shell();
                 match (self.tiling, self.loaded.config.general.tiling) {
                     (false, true) => self.start_tiling(),
                     (true, false) => self.stop_tiling(),
@@ -656,6 +849,11 @@ impl Daemon {
             .set_settings(config.layout_settings(), config.general.layout);
         self.repaint_borders();
         self.apply(effects);
+    }
+
+    fn toggle_logging(&mut self) {
+        logging::set_enabled(!logging::enabled());
+        self.tray.set_logging(logging::enabled());
     }
 
     /// `togglepause`: pauses the window manager and the remapper, or resumes both if both are
@@ -700,6 +898,16 @@ impl Daemon {
 
     /// `focusorexec`: focuses a window of the command's program if there is one, otherwise
     /// runs the command.
+    /// Focuses a window Tile manages, switching to its workspace first.
+    fn focus_managed(&mut self, id: WindowId) {
+        let effects = self.desktops.with_owner(id, |s| s.window_focused(id));
+        self.apply(effects);
+        self.windows.focus(id);
+        if let Some(frame) = self.windows.frame(id) {
+            self.warp_cursor(frame);
+        }
+    }
+
     fn focus_or_exec(&mut self, command: &str) {
         let exe = Path::new(tile_config::program(command))
             .file_name()
@@ -726,12 +934,7 @@ impl Daemon {
                 .or_else(|| matches.first())
                 .copied();
             if let Some(id) = next {
-                let effects = self.desktops.with_owner(id, |s| s.window_focused(id));
-                self.apply(effects);
-                self.windows.focus(id);
-                if let Some(frame) = self.windows.frame(id) {
-                    self.warp_cursor(frame);
-                }
+                self.focus_managed(id);
                 return;
             }
             if focus_exe(&exe) {
@@ -835,6 +1038,10 @@ impl Daemon {
         match command {
             Command::Reload => self.reload(),
             Command::TogglePause => self.toggle_pause(),
+            Command::ToggleTile => self.set_paused(!self.paused),
+            Command::ToggleRemap => self.set_remap_paused(!self.remap_paused),
+            Command::ToggleShell => self.toggle_shell(),
+            Command::ToggleLog => self.toggle_logging(),
             Command::Exit => self.quit = true,
             Command::Exec(line) => launch::exec(&line),
             Command::FocusOrExec(line) => self.focus_or_exec(&line),
@@ -1244,6 +1451,7 @@ impl Daemon {
                 let id = WindowId(raw);
                 if self.desktops.is_managed(id) {
                     self.moving.insert(id);
+                    self.resizing.remove(&id);
                     self.tweens.remove(&id);
                 }
             }
@@ -1251,11 +1459,16 @@ impl Daemon {
                 let id = WindowId(raw);
                 if self.moving.remove(&id) {
                     self.placed.remove(&id);
+                    let resized = self.resizing.remove(&id);
                     if let Some(rect) = self.windows.frame(id) {
                         let cursor = cursor_pos();
-                        let effects = self
-                            .desktops
-                            .with_owner(id, |s| s.window_moved(id, rect, cursor));
+                        let effects = self.desktops.with_owner(id, |s| {
+                            if resized {
+                                s.window_resized(id, rect)
+                            } else {
+                                s.window_moved(id, rect, cursor)
+                            }
+                        });
                         self.apply(effects);
                     }
                 }
@@ -1274,8 +1487,40 @@ impl Daemon {
                     self.try_manage(raw);
                 }
             }
-            WinEvent::LocationChange(raw) => self.enforce_size(WindowId(raw)),
+            WinEvent::LocationChange(raw) => {
+                let id = WindowId(raw);
+                if self.moving.contains(&id) {
+                    self.follow_resize(id);
+                } else {
+                    self.enforce_size(id);
+                }
+            }
         }
+    }
+
+    /// While an edge of a tiled window is dragged, fits the other windows around it as it goes,
+    /// without animating them, so they keep up with the pointer.
+    fn follow_resize(&mut self, id: WindowId) {
+        let Some(rect) = self.windows.frame(id) else {
+            return;
+        };
+        let effects = self
+            .desktops
+            .with_owner(id, |s| s.window_resizing(id, rect));
+        if effects.is_empty() {
+            return;
+        }
+        self.resizing.insert(id);
+        for effect in effects {
+            if let Effect::Place { id: other, rect } = effect {
+                // The window being dragged is skipped by `place`: the user holds it.
+                if let Err(gone) = self.place(other, rect, false) {
+                    self.ignored.insert(gone);
+                    self.unmanage(gone);
+                }
+            }
+        }
+        self.update_borders();
     }
 
     /// Some apps enforce a minimum size larger than their tile. Re-place those with force so
@@ -1349,10 +1594,8 @@ impl Daemon {
         match event {
             TrayEvent::ToggleTile => self.set_paused(!self.paused),
             TrayEvent::ToggleRemap => self.set_remap_paused(!self.remap_paused),
-            TrayEvent::ToggleLogging => {
-                logging::set_enabled(!logging::enabled());
-                self.tray.set_logging(logging::enabled());
-            }
+            TrayEvent::ToggleShell => self.toggle_shell(),
+            TrayEvent::ToggleLogging => self.toggle_logging(),
             // If the config file couldn't be created, open its folder instead.
             TrayEvent::OpenConfig => {
                 if let Err(e) = tile_config::create_if_missing(&self.config_path) {
@@ -1366,8 +1609,14 @@ impl Daemon {
                 launch::open(&paths::log_dir());
             }
             TrayEvent::Quit => self.quit = true,
-            TrayEvent::DisplayChanged if self.tiling => self.refresh_monitors(),
-            TrayEvent::DisplayChanged => {}
+            TrayEvent::DisplayChanged => {
+                if let Some(backdrop) = &self.backdrop {
+                    backdrop.refresh();
+                }
+                if self.tiling {
+                    self.refresh_monitors();
+                }
+            }
             TrayEvent::SessionChanged => {
                 if let Some(remap) = &self.remap {
                     remap.send(remap::Command::Reset);
@@ -1573,6 +1822,7 @@ impl Daemon {
 
     /// Drops windows that disappeared without us noticing.
     fn sweep(&mut self) {
+        self.sync_shell();
         if !self.tiling {
             return;
         }

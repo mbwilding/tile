@@ -31,6 +31,10 @@ struct Args {
     /// Internal: start programs for an elevated Tile, as the normal user.
     #[arg(long, hide = true)]
     launcher: bool,
+    /// Run as the Windows shell, as the tray's Shell switch sets up: host the notification area
+    /// and start the sign-in programs, whether or not the tray's Shell switch is on.
+    #[arg(long)]
+    shell: bool,
 }
 
 /// Runs in a separate process so windows are restored even if the daemon is killed.
@@ -64,7 +68,22 @@ fn main() -> anyhow::Result<()> {
             .build()?;
         return runtime.block_on(launch::serve());
     }
-    let _guard = logging::init("tile.log", args.log.as_deref());
+    // Signed in as the shell without admin rights while the sign-in task starts an elevated
+    // Tile: serve it as the launcher, and take over only if the task never starts Tile.
+    let helper = args.shell && !tile_platform::is_elevated() && launch::sign_in_task_exists();
+    let _guard = logging::init(
+        if helper { "launcher.log" } else { "tile.log" },
+        args.log.as_deref(),
+    );
+    if helper {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+        if runtime.block_on(launch::serve_for_tile())? {
+            return Ok(());
+        }
+        tracing::warn!("the sign-in task didn't start Tile; running it here");
+    }
     let Some(_instance) = tile_hook::single_instance("Tile") else {
         tracing::error!("Tile is already running");
         anyhow::bail!("Tile is already running");
@@ -94,7 +113,7 @@ fn main() -> anyhow::Result<()> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
-    let result = runtime.block_on(daemon::run(config_path, loaded, config_error));
+    let result = runtime.block_on(daemon::run(config_path, loaded, config_error, args.shell));
     if let Err(e) = &result {
         tracing::error!("{e:#}");
     }

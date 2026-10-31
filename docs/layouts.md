@@ -44,3 +44,11 @@ Windows already open when Tile starts are tiled on the monitor they are on, take
 land in tiles near where they were, and new windows open on the monitor under the
 mouse. `movefocus` and `movewindow` carry on to the next monitor at the edge of the current one,
 landing on the window nearest the one you left.
+
+## Mouse resizing
+
+Drag the edge of a tiled window to resize its split. The other windows fit around it while you
+drag, and everything settles into its tile when you let go. Dragging an edge on past a
+neighbour keeps resizing, however far the pointer goes; it never swaps the windows. Swapping is
+a plain drag of the title bar (or `Win` and drag) at the window's own size, dropped on another
+tile.

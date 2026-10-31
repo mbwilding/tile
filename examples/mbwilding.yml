@@ -5,6 +5,7 @@ general:
 tray:
   tile: true
   remap: false
+  shell: true
   logging: false
 
 theme:

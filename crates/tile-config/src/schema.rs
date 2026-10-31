@@ -11,6 +11,7 @@ pub struct Config {
     pub theme: Theme,
     pub cursor: Cursor,
     pub tray: Tray,
+    pub shell: Shell,
     pub animations: Animations,
     pub dwindle: Dwindle,
     pub master: Master,
@@ -130,6 +131,7 @@ impl Default for Config {
             theme: Theme::default(),
             cursor: Cursor::default(),
             tray: Tray::default(),
+            shell: Shell::default(),
             animations: Animations::default(),
             dwindle: Dwindle::default(),
             master: Master::default(),
@@ -323,6 +325,9 @@ pub struct Tray {
     pub remap: bool,
     /// Logging to the log file is on.
     pub logging: bool,
+    /// Tile is the shell: it hosts the notification area when no taskbar is running, keeps the
+    /// launcher bound and lists the tray icons in it.
+    pub shell: bool,
 }
 
 impl Default for Tray {
@@ -331,7 +336,24 @@ impl Default for Tray {
             tile: true,
             remap: false,
             logging: false,
+            shell: false,
         }
+    }
+}
+
+/// Tile as the Windows shell, in place of Explorer's taskbar. Whether it is the shell is the
+/// tray's Shell switch (`tray.shell`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Shell {
+    /// Run the `Run` and `RunOnce` registry keys and the Startup folders when Tile starts as
+    /// the shell, as Explorer would.
+    pub run_startup: bool,
+}
+
+impl Default for Shell {
+    fn default() -> Self {
+        Self { run_startup: true }
     }
 }
 
@@ -508,6 +530,16 @@ pub struct Launcher {
     /// Text starting with this runs a command line or a Tile dispatcher instead of searching
     /// apps. Empty switches command mode off.
     pub command_prefix: String,
+    /// Offer the system items (volume, network, Wi-Fi, Bluetooth, battery, clock and power
+    /// actions) and the notification area's tray icons among the results when they match what
+    /// is typed. Off, they are still listed by `system_prefix`.
+    pub system_items: bool,
+    /// Text starting with this lists the system items and tray icons, narrowed by what follows.
+    /// Empty switches that off.
+    pub system_prefix: String,
+    /// Show the bar at the bottom with the time (with seconds), the date and the buttons for
+    /// switching user, logging out, locking, restarting and shutting down.
+    pub bar: bool,
 }
 
 impl Launcher {
@@ -557,6 +589,9 @@ impl Default for Launcher {
             placeholder: String::new(),
             calculator: true,
             command_prefix: "!".into(),
+            system_items: true,
+            system_prefix: "@".into(),
+            bar: true,
         }
     }
 }

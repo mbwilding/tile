@@ -14,10 +14,11 @@ How Tile fits in with Windows, and what it changes.
 
 ## The tray
 
-The menu holds Tile, Remap and Log, then Open logs and Open config, then Quit.
+The menu holds Tile, Remap, Shell and Log, then Open logs and Open config, then Quit.
 
 Tile and Remap switch the window manager and the key remapper on or off on their own, and are
-remembered across restarts in the config's `tray` section. Tile starts on and Remap off. Launch
+remembered across restarts in the config's `tray` section. Tile starts on and Remap off. Shell
+makes Tile the [shell](shell.md) (it starts off). Launch
 and close binds work either way. Log switches logging on or off (nothing is logged until then, or
 until `--log` is passed: `tile.exe --log tile=debug` logs every keybind it handles).
 
@@ -80,6 +81,23 @@ icon from the shell (`IShellItemImageFactory`) and starts apps as `shell:AppsFol
 through the normal-rights helper above. Its window is created hidden at startup, is never tiled
 (Tile leaves its own windows alone) and takes focus the way `focusorexec` does. It closes when it
 loses focus.
+
+## Shell mode
+
+With [shell mode](shell.md), Tile registers a window of class `Shell_TrayWnd` (the one apps send
+`Shell_NotifyIcon` to) while no other taskbar exists. It allows `WM_COPYDATA` through UIPI, so
+an elevated Tile still hears from normal apps, and broadcasts `TaskbarCreated` so apps add their
+icons again. It keeps the icons and posts a click to the app's callback window as Explorer
+would, first reporting the pointer over it, and allowing the app to take the foreground.
+
+Many apps (and Tile's own tray icon) ask `Shell_NotifyIconGetRect` where an icon is before they
+show a menu or ignore the click. The shell answers that with two `WM_COPYDATA` questions (the
+corner, then the size, each packed into the reply), and Tile answers them with a small square
+under the pointer, where the click that opens the menu was made. Without an answer such an app
+shows its menu in the screen's corner, or not at all. The window goes away when another taskbar
+appears. Turning the Shell switch on writes the Winlogon `Shell` value under `HKCU` and sets
+`SeparateProcess`; turning it off removes the value, if it is Tile's, and puts `SeparateProcess`
+back. Tile checks both against the switch each time it starts and when the config changes.
 
 ## The workspace indicator
 

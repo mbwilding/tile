@@ -16,7 +16,7 @@ pub use keys::{Keybind, Modifiers};
 pub use rules::{RuleOutcome, Rules};
 pub use schema::{
     Animations, Color, Config, Corners, Cursor, General, IndicatorPosition, IndicatorStyle,
-    Launcher, LauncherStyle, Remap, Rule, SearchPosition, Theme, Tray, WorkspaceIndicator,
+    Launcher, LauncherStyle, Remap, Rule, SearchPosition, Shell, Theme, Tray, WorkspaceIndicator,
     default_binds, program,
 };
 pub use watch::watch;
@@ -228,10 +228,11 @@ fn set_bools(text: &str, section: &str, pairs: &[(&str, bool)]) -> String {
     out
 }
 
-fn tray_pairs(tray: &Tray) -> [(&'static str, bool); 3] {
+fn tray_pairs(tray: &Tray) -> [(&'static str, bool); 4] {
     [
         ("tile", tray.tile),
         ("remap", tray.remap),
+        ("shell", tray.shell),
         ("logging", tray.logging),
     ]
 }

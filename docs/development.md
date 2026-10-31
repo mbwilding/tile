@@ -25,8 +25,8 @@ Aliases in `.cargo/config.toml`:
 | `tile-core` | Platform-independent state, layouts, dispatchers, easing and the launcher's search (unit tested) |
 | `tile-remap` | The remapping engine: keyd's layers and overloads as a pure state machine (tested) |
 | `tile-config` | YAML schema, keybind parsing, window rules, remap layers, the tray switches and file watching |
-| `tile-hook` | The low-level keyboard and mouse hooks, `SendInput`, shell icons and other raw calls: the only `unsafe` |
-| `tile-platform` | Win32: window events, placement and animation, the keybind hook, the Win+drag mouse hook, tray, the launcher window, virtual desktops |
+| `tile-hook` | The low-level keyboard and mouse hooks, `SendInput`, shell icons, the notification area host (`Shell_TrayWnd`), volume, battery, network and radios and other raw calls: the only `unsafe` |
+| `tile-platform` | Win32: window events, placement and animation, the keybind hook, the Win+drag mouse hook, tray, the launcher window, the sign-in programs, virtual desktops |
 | `tile-ipc` | Named-pipe JSON protocol |
 | `tile` | The daemon (`tile.exe`) |
 | `tilectl` | The command-line tool (`tilectl.exe`), including install/uninstall |

@@ -82,11 +82,67 @@ that start with it; picking one that takes an argument puts its name in the sear
 to finish (`!workspace `), and picking one that doesn't runs it. Set `command_prefix: ""` to
 switch commands off.
 
+## System items and tray icons
+
+The launcher also finds what Explorer's taskbar tray would show. They appear after the apps when
+what you type matches them (`vol`, `bluetooth`, `shut`), or all together when you start the
+search with `launcher.system_prefix` (`@` by default): `@` lists them, `@blue` narrows them. Set
+`system_items: false` to list them only after the prefix, or `system_prefix: ""` to switch the
+prefix off.
+
+| Row | Enter does |
+| --- | --- |
+| **Volume: 45%** | mutes or unmutes the default output |
+| **Volume up** / **Volume down** | steps the volume by 10% |
+| **Set volume to 30%** (type `volume 30`) | sets the volume |
+| **Network: Home** | opens the network settings |
+| **Wi-Fi** and **Bluetooth** | turn the radio on or off (only on a machine that has one) |
+| **Battery: 80%** | opens the battery settings (only on a machine with a battery) |
+| **Clock** | opens the date and time settings |
+| **Lock**, **Sleep** | do it now |
+| **Sign out**, **Restart**, **Shut down** | ask for Enter again first, as they lose unsaved work |
+
+The rows are read in the background when the launcher opens, so the current values show up a
+moment after it does.
+
+### Tray icons
+
+When Tile hosts the notification area ([shell mode](shell.md)), the apps' tray icons sit in a
+row of their own under the bar at the top of the launcher, centred, for as long as it is open.
+The search box and the results are under that. The window
+widens to hold them when there are more than its width fits. With Explorer's taskbar running,
+Explorer owns the tray and there are none to show.
+
+- **Hover** an icon to see its name.
+- **Click** it as you would on a taskbar. The launcher closes and the app opens or focuses.
+- **Right click** it for the app's own menu. The launcher stays open behind the menu and comes
+  back to the front when the menu closes, unless your choice brought another window forward.
+
+Tray icons are tiny, usually 16 pixels, so one under about three quarters of the size shown is
+swapped for the sharper icon of the app's program.
+
+They are also found by typing, like the other items: Enter clicks the icon, and Shift+Enter
+right clicks it, which also leaves the launcher open.
+
+
+## The bar
+
+At the top of the launcher is a bar (`bar: false` hides it). On the left it shows the time in
+bold with seconds, ticking while the launcher is open, and the date. On the right are buttons
+for **Switch user**, **Log out**, **Lock**, **Restart** and **Shut down**, drawn with Windows'
+own icons (Segoe Fluent Icons, or Segoe MDL2 Assets on an older Windows). Pointing at a button
+shows its name where the date is.
+Switch user leaves your session running and shows the sign-in screen (`tsdisconnect`). Log out,
+Restart and Shut down lose unsaved work, so the first click highlights the button and asks
+you to click again; moving off the button takes the question back. The window widens to
+hold the bar when it is wider than the launcher.
+
 ## Keys
 
 | Key | Action |
 | --- | --- |
-| `Enter` | start the selected row (run a command, copy a sum) |
+| `Enter` | start the selected row (run a command, copy a sum, change a system item, click a tray icon found by typing) |
+| `Shift+Enter` | right click the selected tray icon found by typing |
 | `Esc` | close |
 | `Up` / `Down`, `Ctrl+K` / `Ctrl+J`, `Ctrl+P` / `Ctrl+N` | select the previous / next row |
 | `Tab` / `Shift+Tab` | next / previous row |
@@ -100,7 +156,7 @@ switch commands off.
 
 Keys you remap to the arrows (a `remap` layer) work the same as the arrows.
 
-With the mouse, hovering selects, clicking starts and the wheel scrolls (unless `ignore_mouse` is
+With the mouse, hovering selects, clicking starts, the wheel scrolls, and the tray row takes left and right clicks (unless `ignore_mouse` is
 on). Clicking anywhere else, or switching to another window, closes it.
 
 ## Launch history

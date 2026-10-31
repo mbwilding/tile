@@ -46,6 +46,14 @@ pub enum Command {
     Launcher,
     Reload,
     TogglePause,
+    /// Pause or resume the window manager, like the tray's Tile item.
+    ToggleTile,
+    /// Pause or resume the key remapper, like the tray's Remap item.
+    ToggleRemap,
+    /// Make Tile the shell, or stop, like the tray's Shell item.
+    ToggleShell,
+    /// Switch logging on or off, like the tray's Log item.
+    ToggleLog,
     Exit,
 }
 
@@ -112,6 +120,10 @@ pub const DISPATCHERS: &[(&str, &str)] = &[
     ("launcher", ""),
     ("reload", ""),
     ("togglepause", ""),
+    ("toggletile", ""),
+    ("toggleremap", ""),
+    ("toggleshell", ""),
+    ("togglelog", ""),
     ("exit", ""),
 ];
 
@@ -128,6 +140,10 @@ impl Command {
                 | Self::Launcher
                 | Self::Reload
                 | Self::TogglePause
+                | Self::ToggleTile
+                | Self::ToggleRemap
+                | Self::ToggleShell
+                | Self::ToggleLog
                 | Self::Exit
         )
     }
@@ -236,6 +252,10 @@ impl FromStr for Command {
             "launcher" => Self::Launcher,
             "reload" => Self::Reload,
             "togglepause" => Self::TogglePause,
+            "toggletile" => Self::ToggleTile,
+            "toggleremap" => Self::ToggleRemap,
+            "toggleshell" => Self::ToggleShell,
+            "togglelog" => Self::ToggleLog,
             "exit" => Self::Exit,
             _ => return Err(ParseError::Unknown(name)),
         })
@@ -286,6 +306,10 @@ impl fmt::Display for Command {
             Self::Launcher => f.write_str("launcher"),
             Self::Reload => f.write_str("reload"),
             Self::TogglePause => f.write_str("togglepause"),
+            Self::ToggleTile => f.write_str("toggletile"),
+            Self::ToggleRemap => f.write_str("toggleremap"),
+            Self::ToggleShell => f.write_str("toggleshell"),
+            Self::ToggleLog => f.write_str("togglelog"),
             Self::Exit => f.write_str("exit"),
         }
     }

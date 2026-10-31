@@ -14,6 +14,7 @@ use std::{
         mpsc as std_mpsc,
     },
     thread::{self, JoinHandle},
+    time::{Duration, Instant},
 };
 
 use regex::RegexSet;
@@ -22,7 +23,9 @@ use tile_core::{
     Command, Rect, calc,
     input::Input,
     search::{self, App, CommandEntry, RankOptions, Usage},
+    system::{self, Action, Power, format_date, format_time},
 };
+use tile_hook::notify::{Click, IconImage, ItemKey, Registry, TrayItem};
 use tokio::sync::mpsc::UnboundedSender;
 use winsafe::{self as w, co, guard::DeleteObjectGuard, gui, prelude::*};
 
@@ -37,6 +40,15 @@ pub enum LauncherEvent {
     Run(String),
     /// Run a Tile dispatcher.
     Dispatch(Command),
+    /// Click a tray icon of the notification area.
+    Tray {
+        key: ItemKey,
+        click: Click,
+        /// Where the pointer was, for the menu the app may show.
+        at: (i32, i32),
+    },
+    /// Carry out a system item's action.
+    System(Action),
 }
 
 /// A result row.
@@ -47,6 +59,16 @@ enum Row {
     Command(CommandEntry),
     /// The value of the search as a calculation.
     Calc(f64),
+    /// An index into the system items.
+    System(usize),
+    /// An index into the tray icons.
+    Tray(usize),
+}
+
+/// A row's picture.
+enum RowIcon {
+    App(String),
+    Tray(IconImage),
 }
 
 /// What picking a row did.
@@ -73,6 +95,7 @@ enum Request {
     Toggle(Option<Rect>),
     Settings(Box<LauncherSettings>),
     Apps(Vec<App>),
+    System(system::Status),
     Quit,
 }
 
@@ -89,6 +112,7 @@ impl Launcher {
         events: UnboundedSender<LauncherEvent>,
         settings: LauncherSettings,
         usage_path: PathBuf,
+        tray: Registry,
     ) -> Self {
         let (tx, rx) = std_mpsc::channel();
         let hwnd = Arc::new(AtomicIsize::new(0));
@@ -96,7 +120,7 @@ impl Launcher {
             .name("launcher".into())
             .spawn({
                 let (tx, hwnd) = (tx.clone(), hwnd.clone());
-                move || run(events, settings, usage_path, rx, tx, hwnd)
+                move || run(events, settings, usage_path, tray, rx, tx, hwnd)
             })
             .inspect_err(|e| tracing::error!("failed to start the launcher thread: {e}"))
             .ok();
@@ -185,14 +209,45 @@ fn mix(a: Color, b: Color, amount: u16) -> Color {
 struct Fonts {
     main: DeleteObjectGuard<w::HFONT>,
     small: DeleteObjectGuard<w::HFONT>,
+    /// The main font in bold, for the bar's time.
+    bold: DeleteObjectGuard<w::HFONT>,
+    /// Between the two, for the bar's date.
+    date: DeleteObjectGuard<w::HFONT>,
+    /// Windows' icon font, for the bar's buttons.
+    icons: DeleteObjectGuard<w::HFONT>,
     /// Pixel heights.
     main_px: i32,
     small_px: i32,
+    date_px: i32,
+}
+
+/// The icon font this Windows has: Fluent Icons on Windows 11, else the older MDL2 Assets.
+fn icon_face() -> &'static str {
+    let fonts = std::env::var_os("WINDIR").map_or_else(
+        || PathBuf::from(r"C:\Windows\Fonts"),
+        |dir| PathBuf::from(dir).join("Fonts"),
+    );
+    if fonts.join("SegoeIcons.ttf").exists() {
+        "Segoe Fluent Icons"
+    } else {
+        "Segoe MDL2 Assets"
+    }
 }
 
 /// Where things go, in client pixels.
 struct Layout {
     search: w::RECT,
+    /// The row of tray icons, empty without any.
+    strip: w::RECT,
+    /// One tray icon's cell width, and the icon's size inside it.
+    cell: i32,
+    tray_icon: i32,
+    /// Where the first tray icon's cell starts, so the row is centred.
+    tray_x: i32,
+    /// The bar with the clock and the power buttons, empty when it is off.
+    bar: w::RECT,
+    /// The bar's buttons, in the order of [`BAR_BUTTONS`].
+    buttons: Vec<w::RECT>,
     list: w::RECT,
     row: i32,
     icon: i32,
@@ -219,6 +274,53 @@ struct State {
     icons: HashMap<String, Option<tile_hook::Icon>>,
     /// Where the pointer was first seen since opening; moves from there select rows.
     mouse: Option<(i32, i32)>,
+    /// The notification area's icons.
+    registry: Registry,
+    /// The tray icons when the launcher opened.
+    tray: Vec<TrayItem>,
+    /// The tray icon the pointer is over.
+    tray_hover: Option<usize>,
+    /// The bar button the pointer is over.
+    bar_hover: Option<usize>,
+    /// What the system was doing when the launcher opened.
+    status: system::Status,
+    /// The system rows matching the search.
+    system: Vec<system::Entry>,
+    /// A power action that needs Enter pressed again.
+    armed: Option<Power>,
+    /// While a tray icon's menu is up: the launcher stays open behind it.
+    menu: Option<MenuWatch>,
+}
+
+/// Waiting for a tray icon's menu to close.
+struct MenuWatch {
+    since: Instant,
+    /// The menu has been seen on screen.
+    seen: bool,
+}
+
+const MENU_TIMER: usize = 2;
+/// Repaints the bar's clock while the launcher is open.
+const CLOCK_TIMER: usize = 3;
+/// The buttons of the bar, left to right: a name, its icon in Windows' icon font, and what it
+/// does.
+const BAR_BUTTONS: [(&str, char, Power); 5] = [
+    ("Switch user", '\u{E748}', Power::SwitchUser),
+    ("Log out", '\u{F3B1}', Power::SignOut),
+    ("Lock", '\u{E72E}', Power::Lock),
+    ("Restart", '\u{E777}', Power::Restart),
+    ("Shut down", '\u{E7E8}', Power::ShutDown),
+];
+/// How long a menu may take to appear before it is taken to have never come.
+const MENU_GRACE: Duration = Duration::from_millis(1500);
+
+/// Starts waiting for the menu a right click is about to open, instead of closing.
+fn watch_menu(wnd: &gui::WindowMain, s: &mut State) {
+    s.menu = Some(MenuWatch {
+        since: Instant::now(),
+        seen: false,
+    });
+    let _ = wnd.hwnd().SetTimer(MENU_TIMER, 250, None);
 }
 
 impl State {
@@ -248,30 +350,60 @@ impl State {
             sort_by_usage: config.sort_by_usage,
             max_results: config.max_results,
         };
-        let prefix = config.command_prefix.as_str();
-        let query = self.query.text();
-        self.results = match query.strip_prefix(prefix) {
-            Some(rest) if !prefix.is_empty() => search::commands(rest)
-                .into_iter()
-                .map(Row::Command)
-                .collect(),
-            _ => {
-                let sum = config
-                    .calculator
-                    .then(|| calc::calculation(query))
-                    .flatten();
+        let prefix = config.command_prefix.clone();
+        let system_prefix = config.system_prefix.clone();
+        let calculator = config.calculator;
+        let system_items = config.system_items;
+        let query = self.query.text().to_owned();
+        self.armed = None;
+        self.system.clear();
+        self.results =
+            if let Some(rest) = query.strip_prefix(&prefix).filter(|_| !prefix.is_empty()) {
+                search::commands(rest)
+                    .into_iter()
+                    .map(Row::Command)
+                    .collect()
+            } else if let Some(rest) = query
+                .strip_prefix(&system_prefix)
+                .filter(|_| !system_prefix.is_empty())
+            {
+                self.system_rows(rest)
+            } else {
+                let sum = calculator.then(|| calc::calculation(&query)).flatten();
+                let extras = if system_items && !query.trim().is_empty() {
+                    self.system_rows(&query)
+                } else {
+                    Vec::new()
+                };
                 sum.map(Row::Calc)
                     .into_iter()
                     .chain(
-                        search::rank(query, &self.apps, &self.usage, &options)
+                        search::rank(&query, &self.apps, &self.usage, &options)
                             .into_iter()
                             .map(Row::App),
                     )
+                    .chain(extras)
                     .collect()
-            }
-        };
+            };
         self.selected = 0;
         self.scroll = 0;
+    }
+
+    /// The rows for the system items and tray icons matching `query`, system items first.
+    fn system_rows(&mut self, query: &str) -> Vec<Row> {
+        self.system = system::find(query, &self.status);
+        let query = query.trim();
+        let mut tray: Vec<(f64, usize)> = self
+            .tray
+            .iter()
+            .enumerate()
+            .filter_map(|(i, item)| Some((search::fuzzy(query, &item.name)?, i)))
+            .collect();
+        tray.sort_by(|a, b| b.0.total_cmp(&a.0));
+        (0..self.system.len())
+            .map(Row::System)
+            .chain(tray.into_iter().map(|(_, i)| Row::Tray(i)))
+            .collect()
     }
 
     fn fonts(&mut self) -> &Fonts {
@@ -279,32 +411,48 @@ impl State {
             let config = &self.settings.config;
             let main_px = (config.font_size.clamp(6, 48) * self.dpi / 72) as i32;
             let small_px = main_px * 4 / 5;
-            let font = |px: i32| {
-                let mut lf = w::LOGFONT::new_face(-px, &self.settings.style.font);
+            let date_px = main_px * 9 / 10;
+            let face = &self.settings.style.font;
+            let font = |face: &str, px: i32, bold: bool| {
+                let mut lf = w::LOGFONT::new_face(-px, face);
                 lf.lfQuality = co::QUALITY::CLEARTYPE;
+                if bold {
+                    lf.lfWeight = co::FW::BOLD;
+                }
                 w::HFONT::CreateFontIndirect(&lf)
             };
-            match (font(main_px), font(small_px)) {
-                (Ok(main), Ok(small)) => {
-                    self.fonts = Some(Fonts {
-                        main,
-                        small,
-                        main_px,
-                        small_px,
-                    });
-                }
-                (Err(e), _) | (_, Err(e)) => {
-                    tracing::warn!("launcher font `{}`: {e}", self.settings.style.font);
-                }
+            let made = (|| {
+                Ok::<_, co::ERROR>(Fonts {
+                    main: font(face, main_px, false)?,
+                    small: font(face, small_px, false)?,
+                    bold: font(face, main_px, true)?,
+                    date: font(face, date_px, false)?,
+                    icons: font(icon_face(), main_px * 12 / 10, false)?,
+                    main_px,
+                    small_px,
+                    date_px,
+                })
+            })();
+            match made {
+                Ok(fonts) => self.fonts = Some(fonts),
+                Err(e) => tracing::warn!("launcher font `{face}`: {e}"),
             }
         }
-        self.fonts.get_or_insert_with(|| Fonts {
-            main: w::HFONT::CreateFontIndirect(&w::LOGFONT::default())
-                .expect("the default font exists"),
-            small: w::HFONT::CreateFontIndirect(&w::LOGFONT::default())
-                .expect("the default font exists"),
-            main_px: 16,
-            small_px: 13,
+        self.fonts.get_or_insert_with(|| {
+            let plain = || {
+                w::HFONT::CreateFontIndirect(&w::LOGFONT::default())
+                    .expect("the default font exists")
+            };
+            Fonts {
+                main: plain(),
+                small: plain(),
+                bold: plain(),
+                date: plain(),
+                icons: plain(),
+                main_px: 16,
+                small_px: 13,
+                date_px: 14,
+            }
         })
     }
 
@@ -329,13 +477,60 @@ impl State {
         };
         let icon = if config.show_icons { icon } else { 0 };
         let (left, right) = (client.left + pad, client.right - pad);
+        let tray_icon = self.scale(24);
+        let cell = tray_icon + self.scale(12);
+        let strip_h = if self.tray.is_empty() { 0 } else { cell };
+        let tray_x = left + ((right - left - self.tray.len() as i32 * cell) / 2).max(0);
+        // Top to bottom: the bar, the tray icons, then the search box and the results.
+        let bar_h = if config.bar {
+            main_px + self.scale(16)
+        } else {
+            0
+        };
+        let bar = w::RECT {
+            left,
+            top: client.top + pad,
+            right,
+            bottom: client.top + pad + bar_h,
+        };
+        let below_bar = if bar_h > 0 {
+            bar.bottom + gap
+        } else {
+            bar.bottom
+        };
+        let strip = w::RECT {
+            left,
+            top: below_bar,
+            right,
+            bottom: below_bar + strip_h,
+        };
+        let content = if strip_h > 0 {
+            strip.bottom + gap
+        } else {
+            below_bar
+        };
+        // Square buttons from the right edge.
+        let mut buttons = Vec::new();
+        if bar_h > 0 {
+            let mut x = bar.right;
+            for _ in BAR_BUTTONS {
+                buttons.push(w::RECT {
+                    left: x - bar_h,
+                    top: bar.top,
+                    right: x,
+                    bottom: bar.bottom,
+                });
+                x -= bar_h + self.scale(6);
+            }
+            buttons.reverse();
+        }
         let (search, list) = match config.search_position {
             SearchPosition::Top => {
                 let search = w::RECT {
                     left,
-                    top: client.top + pad,
+                    top: content,
                     right,
-                    bottom: client.top + pad + search_h,
+                    bottom: content + search_h,
                 };
                 let list = w::RECT {
                     left,
@@ -354,7 +549,7 @@ impl State {
                 };
                 let list = w::RECT {
                     left,
-                    top: client.top + pad,
+                    top: content,
                     right,
                     bottom: search.top - gap,
                 };
@@ -364,6 +559,12 @@ impl State {
         let visible = ((list.bottom - list.top) / row.max(1)).max(1) as usize;
         Layout {
             search,
+            strip,
+            cell,
+            tray_icon,
+            tray_x,
+            bar,
+            buttons,
             list,
             row,
             icon,
@@ -377,6 +578,7 @@ impl State {
         }
         let last = self.results.len() as isize - 1;
         self.selected = index.clamp(0, last) as usize;
+        self.armed = None;
         if self.selected < self.scroll {
             self.scroll = self.selected;
         } else if self.selected >= self.scroll + visible {
@@ -389,6 +591,37 @@ impl State {
         self.scroll = (self.scroll as isize + rows).clamp(0, max) as usize;
     }
 
+    /// The width the bar needs for its clock, date and buttons.
+    fn bar_width(&self, main_px: i32, date_px: i32) -> i32 {
+        let button = main_px + self.scale(16);
+        let buttons = BAR_BUTTONS.len() as i32 * (button + self.scale(6));
+        let clock = (12 * main_px + 24 * date_px) * 11 / 20;
+        2 * self.scale(12) + clock + self.scale(16) + buttons
+    }
+
+    /// The bar button at a point.
+    fn bar_button_at(&self, layout: &Layout, x: i32, y: i32) -> Option<usize> {
+        layout
+            .buttons
+            .iter()
+            .position(|b| x >= b.left && x < b.right && y >= b.top && y < b.bottom)
+    }
+
+    /// The tray icon at a point of the strip.
+    fn tray_at(&self, layout: &Layout, x: i32, y: i32) -> Option<usize> {
+        let strip = layout.strip;
+        if strip.bottom <= strip.top
+            || x < layout.tray_x
+            || x >= strip.right
+            || y < strip.top
+            || y >= strip.bottom
+        {
+            return None;
+        }
+        let index = ((x - layout.tray_x) / layout.cell.max(1)) as usize;
+        (index < self.tray.len()).then_some(index)
+    }
+
     fn row_at(&self, layout: &Layout, x: i32, y: i32) -> Option<usize> {
         let list = layout.list;
         if x < list.left || x >= list.right || y < list.top || y >= list.bottom {
@@ -399,10 +632,37 @@ impl State {
     }
 
     /// Picks the selected row: what to ask the daemon (noting an app launch), or completes a
-    /// dispatcher's name.
-    fn pick(&mut self) -> Picked {
+    /// dispatcher's name. `secondary` (Shift+Enter, the right button) is a right click on a tray
+    /// icon.
+    fn pick(&mut self, secondary: bool) -> Picked {
         let event = match self.results.get(self.selected).cloned() {
             None => return Picked::Nothing,
+            Some(Row::Tray(i)) => {
+                let Some(item) = self.tray.get(i) else {
+                    return Picked::Nothing;
+                };
+                let at = w::GetCursorPos().map_or((0, 0), |p| (p.x, p.y));
+                let click = if secondary { Click::Right } else { Click::Left };
+                LauncherEvent::Tray {
+                    key: item.key,
+                    click,
+                    at,
+                }
+            }
+            Some(Row::System(i)) => {
+                let Some(entry) = self.system.get(i) else {
+                    return Picked::Nothing;
+                };
+                let action = entry.action;
+                if let Action::Power(power) = action
+                    && power.needs_confirmation()
+                    && self.armed != Some(power)
+                {
+                    self.armed = Some(power);
+                    return Picked::Edited;
+                }
+                LauncherEvent::System(action)
+            }
             Some(Row::Calc(value)) => return Picked::Copy(calc::format(value)),
             Some(Row::App(i)) => {
                 let id = self.apps[i].id.clone();
@@ -429,12 +689,34 @@ impl State {
         Picked::Done(event)
     }
 
-    /// The row's title, subtitle and app id (for its icon).
-    fn describe(&self, row: &Row) -> (String, String, Option<String>) {
+    /// The row's title, subtitle and icon.
+    fn describe(&self, row: &Row) -> (String, String, Option<RowIcon>) {
         match row {
             Row::App(i) => {
                 let app = &self.apps[*i];
-                (app.name.clone(), app.id.clone(), Some(app.id.clone()))
+                (
+                    app.name.clone(),
+                    app.id.clone(),
+                    Some(RowIcon::App(app.id.clone())),
+                )
+            }
+            Row::Tray(i) => {
+                let item = &self.tray[*i];
+                (
+                    item.name.clone(),
+                    "Tray icon. Enter clicks it, Shift+Enter or right click opens its menu".into(),
+                    item.icon.clone().map(RowIcon::Tray),
+                )
+            }
+            Row::System(i) => {
+                let entry = &self.system[*i];
+                let confirming = matches!(entry.action, Action::Power(p) if self.armed == Some(p));
+                let subtitle = if confirming {
+                    "Press Enter again to confirm".to_owned()
+                } else {
+                    entry.subtitle.clone()
+                };
+                (entry.title.clone(), subtitle, None)
             }
             Row::Command(CommandEntry::Dispatch(command)) => {
                 (command.to_string(), "Tile dispatcher".into(), None)
@@ -459,6 +741,14 @@ impl State {
                 None,
             ),
         }
+    }
+
+    /// The icon of a program file, at `size` pixels.
+    fn file_icon(&mut self, path: &str, size: i32) -> Option<&tile_hook::Icon> {
+        self.icons
+            .entry(format!("file:{path}"))
+            .or_insert_with(|| tile_hook::shell_icon(path, size))
+            .as_ref()
     }
 
     fn icon(&mut self, id: &str, size: i32) -> Option<&tile_hook::Icon> {
@@ -532,6 +822,7 @@ fn run(
     events: UnboundedSender<LauncherEvent>,
     settings: LauncherSettings,
     usage_path: PathBuf,
+    registry: Registry,
     requests: std_mpsc::Receiver<Request>,
     requests_tx: std_mpsc::Sender<Request>,
     hwnd_slot: Arc<AtomicIsize>,
@@ -567,8 +858,17 @@ fn run(
         fonts: None,
         icons: HashMap::new(),
         mouse: None,
+        registry,
+        tray: Vec::new(),
+        tray_hover: None,
+        bar_hover: None,
+        status: system::Status::default(),
+        system: Vec::new(),
+        armed: None,
+        menu: None,
     }));
     let listing = Arc::new(AtomicBool::new(false));
+    let system_tx = requests_tx.clone();
     let refresh = {
         let (tx, hwnd_slot, listing) = (requests_tx, hwnd_slot.clone(), listing);
         move || {
@@ -586,6 +886,29 @@ fn run(
                 });
             if let Err(e) = spawned {
                 tracing::warn!("couldn't list apps: {e}");
+            }
+        }
+    };
+
+    // Reading the system waits on Windows, so it happens on a thread of its own.
+    let reading = Arc::new(AtomicBool::new(false));
+    let refresh_system = {
+        let hwnd_slot = hwnd_slot.clone();
+        move || {
+            if reading.swap(true, Ordering::AcqRel) {
+                return;
+            }
+            let (tx, hwnd_slot, reading) = (system_tx.clone(), hwnd_slot.clone(), reading.clone());
+            let spawned = thread::Builder::new()
+                .name("launcher system".into())
+                .spawn(move || {
+                    let status = crate::system::status();
+                    reading.store(false, Ordering::Release);
+                    let _ = tx.send(Request::System(status));
+                    wake(&hwnd_slot);
+                });
+            if let Err(e) = spawned {
+                tracing::warn!("couldn't read the system: {e}");
             }
         }
     };
@@ -633,8 +956,22 @@ fn run(
                 s.fonts = None;
                 s.icons.clear();
             }
+            // The icons first, since they decide how wide the window must be to hold them.
+            s.tray = s.registry.items();
+            let tray_width = s.tray.len() as i32 * s.scale(36) + 2 * s.scale(12);
+            let (main_px, date_px) = {
+                let fonts = s.fonts();
+                (fonts.main_px, fonts.date_px)
+            };
+            let bar_width = if s.config().bar {
+                s.bar_width(main_px, date_px)
+            } else {
+                0
+            };
             let w = s
                 .scale(s.config().width.clamp(200, 4000) as i32)
+                .max(tray_width)
+                .max(bar_width)
                 .min(area.w);
             let h = s
                 .scale(s.config().height.clamp(100, 4000) as i32)
@@ -642,6 +979,9 @@ fn run(
             s.query.clear();
             s.surrogate = None;
             s.mouse = None;
+            s.tray_hover = None;
+            s.bar_hover = None;
+            s.menu = None;
             s.rank();
             drop(s);
             let placed = hwnd.SetWindowPos(
@@ -655,10 +995,13 @@ fn run(
                 return;
             }
             let _ = hwnd.InvalidateRect(None, false);
+            // The bar's clock shows seconds.
+            let _ = hwnd.SetTimer(CLOCK_TIMER, 1000, None);
             if !crate::windows::focus_hwnd(hwnd) {
                 tracing::debug!("the launcher didn't get focus");
             }
             refresh();
+            refresh_system();
         }
     };
 
@@ -686,6 +1029,20 @@ fn run(
                             let _ = wnd.hwnd().InvalidateRect(None, false);
                         }
                     }
+                    Request::System(status) => {
+                        let mut s = state.borrow_mut();
+                        if status != s.status {
+                            s.status = status;
+                            // Re-ranking resets the selection, so only when system rows show.
+                            if !s.system.is_empty() {
+                                let (selected, scroll) = (s.selected, s.scroll);
+                                s.rank();
+                                s.selected = selected.min(s.results.len().saturating_sub(1));
+                                s.scroll = scroll;
+                            }
+                            let _ = wnd.hwnd().InvalidateRect(None, false);
+                        }
+                    }
                     Request::Quit => {
                         state.borrow_mut().icons.clear();
                         w::PostQuitMessage(0);
@@ -696,11 +1053,70 @@ fn run(
         }
     });
 
+    wnd.on().wm_timer(CLOCK_TIMER, {
+        let wnd = wnd.clone();
+        move || {
+            if wnd.hwnd().IsWindowVisible() {
+                let _ = wnd.hwnd().InvalidateRect(None, false);
+            } else {
+                let _ = wnd.hwnd().KillTimer(CLOCK_TIMER);
+            }
+            Ok(())
+        }
+    });
+
     wnd.on().wm_activate({
-        let hide = hide.clone();
+        let (hide, state) = (hide.clone(), state.clone());
         move |p| {
-            if p.event == co::WA::INACTIVE {
+            // The menu of a tray icon takes the focus: the launcher stays until it closes.
+            if p.event == co::WA::INACTIVE && state.borrow().menu.is_none() {
                 hide();
+            }
+            Ok(())
+        }
+    });
+
+    // Once the tray icon's menu has closed, back to the launcher, unless the choice brought
+    // another window forward.
+    wnd.on().wm_timer(MENU_TIMER, {
+        let (wnd, state, hide) = (wnd.clone(), state.clone(), hide.clone());
+        move || {
+            let mut s = state.borrow_mut();
+            let hwnd = wnd.hwnd();
+            let Some(watch) = s.menu.as_mut() else {
+                let _ = hwnd.KillTimer(MENU_TIMER);
+                return Ok(());
+            };
+            if !hwnd.IsWindowVisible() {
+                s.menu = None;
+                let _ = hwnd.KillTimer(MENU_TIMER);
+                return Ok(());
+            }
+            let open = !crate::windows::enumerate(|h| {
+                h.IsWindowVisible() && h.GetClassName().is_ok_and(|c| c == "#32768")
+            })
+            .is_empty();
+            if open {
+                watch.seen = true;
+                return Ok(());
+            }
+            if !watch.seen && watch.since.elapsed() < MENU_GRACE {
+                return Ok(());
+            }
+            s.menu = None;
+            drop(s);
+            let _ = hwnd.KillTimer(MENU_TIMER);
+            let elsewhere = w::HWND::GetForegroundWindow().is_some_and(|f| {
+                f != *hwnd
+                    && f.IsWindowVisible()
+                    && f.GetWindowText().is_ok_and(|t| !t.is_empty())
+                    && !crate::is_shell_window(f.ptr() as isize)
+            });
+            if elsewhere {
+                hide();
+            } else {
+                crate::windows::focus_hwnd(hwnd);
+                let _ = hwnd.InvalidateRect(None, false);
             }
             Ok(())
         }
@@ -731,12 +1147,21 @@ fn run(
     // Does what picking the selected row asks for.
     let act = {
         let (wnd, hide) = (wnd.clone(), hide.clone());
-        move |state: &Rc<RefCell<State>>| {
+        move |state: &Rc<RefCell<State>>, secondary: bool| {
             let mut s = state.borrow_mut();
-            match s.pick() {
+            match s.pick(secondary) {
                 Picked::Done(event) => {
                     let events = s.events.clone();
                     drop(s);
+                    if let LauncherEvent::Tray { click, .. } = &event {
+                        // So the app can show its window or menu in front.
+                        tile_hook::notify::allow_foreground();
+                        if *click == Click::Right {
+                            watch_menu(&wnd, &mut state.borrow_mut());
+                            let _ = events.send(event);
+                            return;
+                        }
+                    }
                     hide();
                     let _ = events.send(event);
                 }
@@ -753,6 +1178,54 @@ fn run(
                 }
                 Picked::Nothing => {}
             }
+        }
+    };
+
+    // Clicks a tray icon of the strip once the launcher has closed.
+    let click_tray = {
+        let (wnd, hide) = (wnd.clone(), hide.clone());
+        move |state: &Rc<RefCell<State>>, index: usize, click: Click| {
+            let s = state.borrow();
+            let Some(item) = s.tray.get(index) else {
+                return;
+            };
+            let at = w::GetCursorPos().map_or((0, 0), |p| (p.x, p.y));
+            let event = LauncherEvent::Tray {
+                key: item.key,
+                click,
+                at,
+            };
+            let events = s.events.clone();
+            drop(s);
+            // So the app can show its window or menu in front.
+            tile_hook::notify::allow_foreground();
+            if click == Click::Right {
+                // Its menu opens over the launcher, which stays until the menu closes.
+                watch_menu(&wnd, &mut state.borrow_mut());
+            } else {
+                hide();
+            }
+            let _ = events.send(event);
+        }
+    };
+
+    // A button of the bar. Those that lose unsaved work ask for a second click first.
+    let click_bar = {
+        let (wnd, hide) = (wnd.clone(), hide.clone());
+        move |state: &Rc<RefCell<State>>, index: usize| {
+            let power = BAR_BUTTONS[index].2;
+            let mut s = state.borrow_mut();
+            if power.needs_confirmation() && s.armed != Some(power) {
+                s.armed = Some(power);
+                drop(s);
+                let _ = wnd.hwnd().InvalidateRect(None, false);
+                return;
+            }
+            s.armed = None;
+            let events = s.events.clone();
+            drop(s);
+            hide();
+            let _ = events.send(LauncherEvent::System(Action::Power(power)));
         }
     };
 
@@ -775,7 +1248,7 @@ fn run(
                 }
                 co::VK::RETURN => {
                     drop(s);
-                    act(&state);
+                    act(&state, shift);
                     return Ok(());
                 }
                 co::VK::UP => s.select(selected - 1, visible),
@@ -859,10 +1332,25 @@ fn run(
                 Some(_) => {}
             }
             let layout = s.layout(wnd.hwnd().GetClientRect()?);
+            let hover = s.tray_at(&layout, at.0, at.1);
+            if hover != s.tray_hover {
+                s.tray_hover = hover;
+                let _ = wnd.hwnd().InvalidateRect(None, false);
+            }
+            let bar_hover = s.bar_button_at(&layout, at.0, at.1);
+            if bar_hover != s.bar_hover {
+                s.bar_hover = bar_hover;
+                // Moving off a button that was asked to confirm takes the question back.
+                if s.armed.is_some() && bar_hover.map(|i| BAR_BUTTONS[i].2) != s.armed {
+                    s.armed = None;
+                }
+                let _ = wnd.hwnd().InvalidateRect(None, false);
+            }
             if let Some(row) = s.row_at(&layout, at.0, at.1)
                 && row != s.selected
             {
                 s.selected = row;
+                s.armed = None;
                 drop(s);
                 let _ = wnd.hwnd().InvalidateRect(None, false);
             }
@@ -871,6 +1359,40 @@ fn run(
     });
 
     wnd.on().wm_l_button_down({
+        let (wnd, state, act, click_tray, click_bar) = (
+            wnd.clone(),
+            state.clone(),
+            act.clone(),
+            click_tray.clone(),
+            click_bar.clone(),
+        );
+        move |p| {
+            let mut s = state.borrow_mut();
+            if s.config().ignore_mouse {
+                return Ok(());
+            }
+            let layout = s.layout(wnd.hwnd().GetClientRect()?);
+            if let Some(index) = s.tray_at(&layout, p.coords.x, p.coords.y) {
+                drop(s);
+                click_tray(&state, index, Click::Left);
+                return Ok(());
+            }
+            if let Some(index) = s.bar_button_at(&layout, p.coords.x, p.coords.y) {
+                drop(s);
+                click_bar(&state, index);
+                return Ok(());
+            }
+            if let Some(row) = s.row_at(&layout, p.coords.x, p.coords.y) {
+                s.selected = row;
+                drop(s);
+                act(&state, false);
+            }
+            Ok(())
+        }
+    });
+
+    // The right button opens a tray icon's menu.
+    wnd.on().wm_r_button_down({
         let (wnd, state) = (wnd.clone(), state.clone());
         move |p| {
             let mut s = state.borrow_mut();
@@ -878,10 +1400,17 @@ fn run(
                 return Ok(());
             }
             let layout = s.layout(wnd.hwnd().GetClientRect()?);
-            if let Some(row) = s.row_at(&layout, p.coords.x, p.coords.y) {
+            if let Some(index) = s.tray_at(&layout, p.coords.x, p.coords.y) {
+                drop(s);
+                click_tray(&state, index, Click::Right);
+                return Ok(());
+            }
+            if let Some(row) = s.row_at(&layout, p.coords.x, p.coords.y)
+                && matches!(s.results[row], Row::Tray(_))
+            {
                 s.selected = row;
                 drop(s);
-                act(&state);
+                act(&state, true);
             }
             Ok(())
         }
@@ -1001,6 +1530,113 @@ fn paint_with(s: &mut State, fonts: &Fonts, dc: &w::HDC, client: w::RECT) -> w::
     let caret_brush = w::HBRUSH::CreateSolidBrush(colorref(style.selected))?;
     dc.FillRect(caret, &caret_brush)?;
 
+    // The tray icons: a row of their own, at the bottom.
+    if layout.strip.bottom > layout.strip.top {
+        let cell = layout.cell;
+        let hover = mix(style.background, style.foreground, 25);
+        let mut end = layout.tray_x;
+        let tray = s.tray.clone();
+        for (i, item) in tray.iter().enumerate() {
+            let x = layout.tray_x + i as i32 * cell;
+            if x + cell > layout.strip.right {
+                break;
+            }
+            end = x + cell;
+            let slot = w::RECT {
+                left: x,
+                right: x + cell,
+                ..layout.strip
+            };
+            if s.tray_hover == Some(i) {
+                fill_round(dc, slot, s.scale(10), hover)?;
+            }
+            let size = layout.tray_icon;
+            let (ix, iy) = (
+                x + (cell - size) / 2,
+                slot.top + (slot.bottom - slot.top - size) / 2,
+            );
+            // A tray icon is usually 16 pixels: drawn larger it blurs, so a small one gives way
+            // to the sharper icon of the app's program.
+            let own = item
+                .icon
+                .as_ref()
+                .filter(|_| item.icon_size >= size * 3 / 4);
+            let hdc = dc.ptr() as isize;
+            if let Some(icon) = own {
+                icon.draw(hdc, ix, iy, size);
+            } else if let Some(icon) = (!item.path.is_empty())
+                .then(|| s.file_icon(&item.path, size))
+                .flatten()
+            {
+                icon.draw(hdc, ix, iy, size);
+            } else if let Some(icon) = &item.icon {
+                icon.draw(hdc, ix, iy, size);
+            } else {
+                let initial: String = item.name.chars().take(1).collect();
+                let centred = co::DT::CENTER | co::DT::VCENTER;
+                text(dc, small, style.dimmed, &initial, slot, centred)?;
+            }
+        }
+        if let Some(item) = s.tray_hover.and_then(|i| s.tray.get(i)) {
+            let bounds = w::RECT {
+                left: end + pad,
+                ..layout.strip
+            };
+            text(dc, small, style.dimmed, &item.name, bounds, left)?;
+        }
+    }
+
+    // The bar: the clock and date, and the power buttons.
+    if layout.bar.bottom > layout.bar.top {
+        let t = w::GetLocalTime();
+        let time = format_time(t.wHour, t.wMinute, t.wSecond);
+        let date = format_date(t.wYear, t.wMonth, t.wDay, t.wDayOfWeek);
+        let bar = layout.bar;
+        let inset = s.scale(6);
+        let bold = &*fonts.bold;
+        let time_width = {
+            let _font = dc.SelectObject(bold)?;
+            dc.GetTextExtentPoint32(&time)?.cx
+        };
+        let time_area = w::RECT {
+            left: bar.left + inset,
+            ..bar
+        };
+        text(dc, bold, style.foreground, &time, time_area, left)?;
+        // The button the pointer is over, or one waiting to be confirmed, names itself where
+        // the date is.
+        let caption = match (
+            BAR_BUTTONS.iter().find(|b| s.armed == Some(b.2)),
+            s.bar_hover,
+        ) {
+            (Some((label, ..)), _) => format!("Click again to confirm: {label}"),
+            (None, Some(i)) => BAR_BUTTONS[i].0.to_owned(),
+            (None, None) => date,
+        };
+        let buttons_left = layout.buttons.first().map_or(bar.right, |b| b.left);
+        let date_area = w::RECT {
+            left: bar.left + inset + time_width + pad,
+            right: buttons_left - pad,
+            ..bar
+        };
+        text(dc, &fonts.date, style.dimmed, &caption, date_area, left)?;
+        let idle = mix(style.background, style.foreground, 20);
+        let hovered = mix(style.background, style.foreground, 40);
+        for (i, ((_, glyph, power), rect)) in BAR_BUTTONS.iter().zip(&layout.buttons).enumerate() {
+            let armed = s.armed == Some(*power);
+            let (fill, colour) = if armed {
+                (style.selected, style.selected_foreground)
+            } else if s.bar_hover == Some(i) {
+                (hovered, style.foreground)
+            } else {
+                (idle, style.foreground)
+            };
+            fill_round(dc, *rect, s.scale(10), fill)?;
+            let centred = co::DT::CENTER | co::DT::VCENTER;
+            text(dc, &fonts.icons, colour, &glyph.to_string(), *rect, centred)?;
+        }
+    }
+
     // The results.
     if s.results.is_empty() {
         let message = if s.loading {
@@ -1020,7 +1656,7 @@ fn paint_with(s: &mut State, fonts: &Fonts, dc: &w::HDC, client: w::RECT) -> w::
     }
     let end = (s.scroll + layout.visible).min(s.results.len());
     for (slot, index) in (s.scroll..end).enumerate() {
-        let (title, subtitle, icon_id) = s.describe(&s.results[index]);
+        let (title, subtitle, icon) = s.describe(&s.results[index]);
         let top = layout.list.top + slot as i32 * layout.row;
         let row = w::RECT {
             left: layout.list.left,
@@ -1038,8 +1674,16 @@ fn paint_with(s: &mut State, fonts: &Fonts, dc: &w::HDC, client: w::RECT) -> w::
         let mut x = row.left + pad;
         if layout.icon > 0 {
             let y = top + (layout.row - layout.icon) / 2;
-            if let Some(icon) = icon_id.and_then(|id| s.icon(&id, layout.icon)) {
-                icon.draw(dc.ptr() as isize, x, y, layout.icon);
+            match icon {
+                Some(RowIcon::App(id)) => {
+                    if let Some(icon) = s.icon(&id, layout.icon) {
+                        icon.draw(dc.ptr() as isize, x, y, layout.icon);
+                    }
+                }
+                Some(RowIcon::Tray(image)) => {
+                    image.draw(dc.ptr() as isize, x, y, layout.icon);
+                }
+                None => {}
             }
             x += layout.icon + pad;
         }

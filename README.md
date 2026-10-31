@@ -15,11 +15,13 @@ menu is suppressed), so no separate hotkey program is needed.
 - Numbered workspaces, independent per monitor (or synced, if you prefer); floating and fullscreen windows
 - Native virtual desktops (Windows 11 24H2+): every desktop has its own workspaces and layouts
 - Mouse: hold `Win` and drag a window; drag a tile onto another to swap them, or its edge to
-  resize the split
+  resize the split, with the other windows following as you drag
 - Binds that start or focus a program (`Win+B` a new Chrome window, `Win+T` a new Windows
   Terminal window), and `Win+Q` to close, working even with tiling off
 - An app launcher: fuzzy search over everything Start lists, with icons, that also runs command
-  lines and Tile dispatchers
+  lines and Tile dispatchers, and finds volume, Wi-Fi, Bluetooth, power and tray icon items
+- Optional [shell mode](docs/shell.md): run Tile instead of Explorer's taskbar, with tray icons
+  and system items in the launcher
 - A workspace indicator that flashes the workspace number when you switch
 - Coloured focus borders (Windows 11) and eased move/resize animations
 - Optional title bar removal for tiled windows, with per-app overrides
@@ -28,7 +30,7 @@ menu is suppressed), so no separate hotkey program is needed.
 - YAML config, applied live on save, with window rules
 - `tilectl`: dispatch commands, query state as JSON, subscribe to events, check the config,
   install/uninstall
-- Tray icon with switches for the window manager (Tile) and the key remapper (Remap)
+- Tray icon with switches for the window manager (Tile), the key remapper (Remap) and shell mode (Shell)
 - Everything Tile changes is undone when it stops, including on a crash or a hard kill
 
 ## Quickstart
@@ -88,7 +90,7 @@ terminal can leave windows hidden and the pointer blank until Tile next starts (
 ## Configuration
 
 Tile runs on its built-in defaults. On first run it creates `%APPDATA%\Tile\config.yml` holding
-only the tray's switches (Tile, Remap, Log), which it saves there as you change them.
+only the tray's switches (Tile, Remap, Shell, Log), which it saves there as you change them.
 Add a section and key to change anything else; saved changes apply immediately, and a broken
 config turns the tray icon red while the last good one stays in use. [Configuration](docs/configuration.md) has every setting and the whole default
 config to copy and paste, and [`examples/`](examples) has complete configs to start from.
@@ -103,6 +105,7 @@ config to copy and paste, and [`examples/`](examples) has complete configs to st
 | [Window rules](docs/window-rules.md) | Float, ignore or place windows by program, class or title |
 | [Key remapping](docs/key-remapping.md) | keyd-style layers, overloads and their limits |
 | [Launcher](docs/launcher.md) | The app launcher: searching, keys, launch history |
+| [Shell mode](docs/shell.md) | Replace Explorer's taskbar: tray icons and system items in the launcher |
 | [tilectl](docs/tilectl.md) | The command-line tool and the IPC pipe |
 | [Windows integration](docs/windows-integration.md) | Tray, files, Win+L, admin windows, what gets undone |
 | [Development](docs/development.md) | Crates, building, testing and the documentation rules |

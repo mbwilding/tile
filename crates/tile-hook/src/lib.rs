@@ -4,7 +4,10 @@
 //! app icons from the shell. This is the only crate in Tile with `unsafe`, and it exposes a
 //! safe API.
 
+pub mod backdrop;
 mod icon;
+pub mod notify;
+pub mod system;
 
 pub use icon::{Icon, monitor_dpi, shell_icon};
 

@@ -12,6 +12,9 @@ tilectl config                    # print the config file's path
 tilectl install / uninstall       # see the README; `cargo deploy` installs a checkout's build
 ```
 
+Becoming the Windows shell is the tray's Shell item (or `tray.shell` in the config, or the
+`toggleshell` dispatcher), not a `tilectl` command; see [shell mode](shell.md).
+
 `tilectl query windows` is the way to find the `exe`, `class` and `title` to write
 [window rules](window-rules.md) against.
 

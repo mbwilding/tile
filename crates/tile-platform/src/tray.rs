@@ -22,6 +22,8 @@ pub enum TrayEvent {
     ToggleTile,
     /// Pause or resume the key remapper.
     ToggleRemap,
+    /// Make Tile the shell, or stop.
+    ToggleShell,
     ToggleLogging,
     OpenConfig,
     OpenLogs,
@@ -46,6 +48,7 @@ pub struct Tray {
 struct Checks {
     tile_paused: AtomicBool,
     remap_paused: AtomicBool,
+    shell: AtomicBool,
     logging: AtomicBool,
     /// Why the config file couldn't be loaded, while it can't.
     config_error: Mutex<Option<String>>,
@@ -100,6 +103,8 @@ struct Items {
     tile: CheckMenuItem,
     /// Checked while the key remapper runs (not paused).
     remap: CheckMenuItem,
+    /// Checked while Tile is the shell.
+    shell: CheckMenuItem,
     log: CheckMenuItem,
     open_logs: MenuId,
     open_config: MenuId,
@@ -115,6 +120,7 @@ impl Items {
         };
         set(&self.tile, !checks.tile_paused.load(Ordering::Relaxed));
         set(&self.remap, !checks.remap_paused.load(Ordering::Relaxed));
+        set(&self.shell, checks.shell.load(Ordering::Relaxed));
         set(&self.log, checks.logging.load(Ordering::Relaxed));
 
         let error = checks
@@ -154,6 +160,7 @@ impl Items {
 fn build(checks: &Checks) -> Result<(TrayIcon, Items), String> {
     let tile = CheckMenuItem::new("Tile", true, true, None);
     let remap = CheckMenuItem::new("Remap", true, true, None);
+    let shell = CheckMenuItem::new("Shell", true, false, None);
     let log = CheckMenuItem::new("Log", true, false, None);
     let open_logs = MenuItem::new("Open logs", true, None);
     let open_config = MenuItem::new("Open config", true, None);
@@ -162,6 +169,7 @@ fn build(checks: &Checks) -> Result<(TrayIcon, Items), String> {
     menu.append_items(&[
         &tile,
         &remap,
+        &shell,
         &log,
         &PredefinedMenuItem::separator(),
         &open_logs,
@@ -187,6 +195,7 @@ fn build(checks: &Checks) -> Result<(TrayIcon, Items), String> {
         quit: quit.id().clone(),
         tile,
         remap,
+        shell,
         log,
     };
     items.sync(&tray, checks);
@@ -217,6 +226,11 @@ impl Tray {
     /// Reflects the key remapper's pause state in the menu.
     pub fn set_remap_paused(&self, paused: bool) {
         self.checks.remap_paused.store(paused, Ordering::Relaxed);
+    }
+
+    /// Reflects whether Tile is the shell in the menu.
+    pub fn set_shell(&self, shell: bool) {
+        self.checks.shell.store(shell, Ordering::Relaxed);
     }
 
     pub fn set_logging(&self, logging: bool) {
@@ -291,6 +305,8 @@ fn run(tx: &mpsc::UnboundedSender<TrayEvent>, shutdown: &Arc<AtomicBool>, checks
                     Some(TrayEvent::ToggleTile)
                 } else if event.id == *items.remap.id() {
                     Some(TrayEvent::ToggleRemap)
+                } else if event.id == *items.shell.id() {
+                    Some(TrayEvent::ToggleShell)
                 } else if event.id == *items.log.id() {
                     Some(TrayEvent::ToggleLogging)
                 } else if event.id == items.open_config || event.id == *items.error.id() {
