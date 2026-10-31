@@ -37,9 +37,9 @@ apply. That keeps the layouts and dispatchers testable without Windows.
 
 ## CI
 
-Every push and pull request runs the `CI` workflow: `yamllint --strict .` (rules in
-`.yamllint.yml`), `cargo fmt --check`, clippy with warnings denied, and the tests, the same checks
-as [`AGENTS.md`](../AGENTS.md).
+Every pull request runs the `CI` workflow: `yamllint --strict .` (rules in `.yamllint.yml`),
+`cargo fmt --check`, clippy with warnings denied, and the tests, the same checks as
+[`AGENTS.md`](../AGENTS.md). Pushes to `main` run them in the `Release` workflow, before it builds.
 
 ## Releasing
 
