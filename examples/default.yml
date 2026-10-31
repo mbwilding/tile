@@ -19,7 +19,7 @@ general:
 
 # The tray's switches. Tile saves these when you change them in the tray.
 tray:
-  tile: false # window manager on (starts off)
+  tile: true # window manager on
   remap: false # key remapper on (starts off)
   logging: false
 
