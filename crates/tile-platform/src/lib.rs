@@ -7,6 +7,7 @@ pub mod desktops;
 mod drag;
 mod events;
 mod hotkeys;
+mod launcher;
 mod lock;
 mod monitors;
 mod mover;
@@ -18,6 +19,7 @@ pub use click_to_do::{click_to_do_available, click_to_do_disabled, disable_click
 pub use drag::{DragEvent, WinDrag};
 pub use events::{WinEvent, WinEventHooks};
 pub use hotkeys::{HotkeyEvent, Hotkeys};
+pub use launcher::{Launcher, LauncherEvent, LauncherSettings};
 pub use lock::{GRANT_SCRIPT, lock_disabled, lock_workstation, set_lock_disabled};
 pub use monitors::monitors;
 pub use mover::{Animation, Insets, Mover};

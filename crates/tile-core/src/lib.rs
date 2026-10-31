@@ -4,9 +4,12 @@
 //! of [`Effect`]s that the platform layer applies, which keeps all logic testable.
 
 pub mod animation;
+pub mod calc;
 pub mod command;
 pub mod geometry;
+pub mod input;
 pub mod layout;
+pub mod search;
 pub mod state;
 
 use serde::{Deserialize, Serialize};

@@ -10,8 +10,9 @@ use tile_config::Loaded;
 use tile_core::{Command, Effect, LayoutKind, ManageOptions, MonitorInfo, Rect, WindowId};
 use tile_ipc::{Event, Incoming, Query, Request, Response, Server};
 use tile_platform::{
-    Animation, Discovered, DragEvent, HotkeyEvent, Hotkeys, Mover, PlaceError, Tray, TrayEvent,
-    WinDrag, WinEvent, WinEventHooks, Windows, close_foreground, cursor_pos,
+    Animation, Discovered, DragEvent, HotkeyEvent, Hotkeys, Launcher, LauncherEvent,
+    LauncherSettings, Mover, PlaceError, Tray, TrayEvent, WinDrag, WinEvent, WinEventHooks,
+    Windows, close_foreground, cursor_pos,
     desktops::{self as vd, DesktopChange, DesktopId},
     focus_desktop, focus_exe, foreground, is_shell_window, monitors, mouse_button_down,
     set_cursor_pos,
@@ -56,6 +57,7 @@ struct Receivers {
     hotkeys: UnboundedReceiver<HotkeyEvent>,
     drags: UnboundedReceiver<DragEvent>,
     tray: UnboundedReceiver<TrayEvent>,
+    launcher: UnboundedReceiver<LauncherEvent>,
     ipc: UnboundedReceiver<Incoming>,
     config: UnboundedReceiver<()>,
     remap: UnboundedReceiver<Notice>,
@@ -72,6 +74,7 @@ struct Daemon {
     /// The window being dragged with Win + left button.
     drag: Option<WindowId>,
     tray: Tray,
+    launcher: Launcher,
     /// The window manager is paused (tray "Tile").
     paused: bool,
     /// The key remapper is paused (tray "Remap").
@@ -117,6 +120,13 @@ struct Daemon {
     cursor_hidden: Option<(i32, i32)>,
     /// While the pointer is hidden: when to next check whether the mouse moved.
     cursor_check_at: Option<Instant>,
+}
+
+fn launcher_settings(loaded: &Loaded) -> LauncherSettings {
+    LauncherSettings {
+        config: loaded.config.launcher.clone(),
+        hide: loaded.launcher_hide.clone(),
+    }
 }
 
 /// Apps repaint their frame on activation, after our focus event; wait that long to re-check.
@@ -206,6 +216,7 @@ pub async fn run(config_path: PathBuf, loaded: Loaded) -> anyhow::Result<()> {
 
     let (hotkey_tx, hotkeys_rx) = mpsc::unbounded_channel();
     let (tray_tx, tray_rx) = mpsc::unbounded_channel();
+    let (launcher_tx, launcher_rx) = mpsc::unbounded_channel();
     let (ipc_tx, ipc_rx) = mpsc::unbounded_channel();
     let (config_tx, config_rx) = mpsc::unbounded_channel();
     let (desktop_tx, desktop_rx) = mpsc::unbounded_channel();
@@ -220,6 +231,11 @@ pub async fn run(config_path: PathBuf, loaded: Loaded) -> anyhow::Result<()> {
     let hotkeys = Hotkeys::start(hotkey_tx).context("failed to install the keyboard hook")?;
     let win_drag = WinDrag::start(drag_tx).context("failed to install the mouse hook")?;
     let tray = Tray::spawn(tray_tx);
+    let launcher = Launcher::spawn(
+        launcher_tx,
+        launcher_settings(&loaded),
+        paths::data_dir().join("launcher.json"),
+    );
     let _watcher = tile_config::watch(&config_path, move || {
         let _ = config_tx.send(());
     })
@@ -241,6 +257,7 @@ pub async fn run(config_path: PathBuf, loaded: Loaded) -> anyhow::Result<()> {
         win_drag,
         drag: None,
         tray,
+        launcher,
         paused: !saved.tile,
         remap_paused: !saved.remap,
         quit: false,
@@ -287,6 +304,7 @@ pub async fn run(config_path: PathBuf, loaded: Loaded) -> anyhow::Result<()> {
             hotkeys: hotkeys_rx,
             drags: drags_rx,
             tray: tray_rx,
+            launcher: launcher_rx,
             ipc: ipc_rx,
             config: config_rx,
             remap: remap_rx,
@@ -366,6 +384,13 @@ impl Daemon {
                 },
                 Some(event) = rx.drags.recv() => self.on_drag(event),
                 Some(event) = rx.tray.recv() => self.on_tray(event),
+                Some(event) = rx.launcher.recv() => match event {
+                    LauncherEvent::Launch(id) => {
+                        launch::exec(&format!("\"shell:AppsFolder\\{id}\""));
+                    }
+                    LauncherEvent::Run(line) => launch::exec(&line),
+                    LauncherEvent::Dispatch(command) => self.run_command(command),
+                },
                 Some(incoming) = rx.ipc.recv() => self.on_ipc(incoming),
                 Some(()) = rx.config.recv() => reload_at = Some(Instant::now() + RELOAD_DEBOUNCE),
                 Some(Notice::Panic) = rx.remap.recv() => self.stop_remap(REMAP_PANIC),
@@ -417,6 +442,7 @@ impl Daemon {
             tile_platform::set_lock_disabled(false);
         }
         paths::save_restore(&Restore::default());
+        self.launcher.shutdown();
         self.tray.shutdown();
     }
 
@@ -562,6 +588,7 @@ impl Daemon {
                     return;
                 }
                 self.loaded = loaded;
+                self.launcher.set_settings(launcher_settings(&self.loaded));
                 self.install_binds();
                 self.update_remap();
                 self.update_cursor();
@@ -787,6 +814,12 @@ impl Daemon {
             Command::KillActive => close_foreground(),
             Command::Desktop(target) => vd::switch_desktop(target),
             Command::Lock => self.lock(),
+            Command::Launcher => {
+                let area = (self.tiling && !self.paused)
+                    .then(|| self.focused_monitor().map(|m| m.work_area))
+                    .flatten();
+                self.launcher.toggle(area);
+            }
             _ if self.paused || !self.tiling => {}
             Command::MoveToDesktop(target) => {
                 if let Some(id) = self.focused() {

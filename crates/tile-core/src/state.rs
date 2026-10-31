@@ -817,6 +817,7 @@ impl State {
             | Command::MoveToDesktop(_)
             | Command::Pin
             | Command::Lock
+            | Command::Launcher
             | Command::Reload
             | Command::TogglePause
             | Command::Exit => Vec::new(),

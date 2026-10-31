@@ -1,0 +1,6 @@
+[alias]
+# `cargo install` is built in and can't be aliased.
+release = "build --release --workspace"
+# Installs the build from `cargo release` (or, for `deploy-dev`, `cargo build --workspace`).
+deploy = "run --release -p tilectl -- install"
+deploy-dev = "run -p tilectl -- install"

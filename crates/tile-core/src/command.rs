@@ -42,6 +42,8 @@ pub enum Command {
     Pin,
     /// Lock the workstation (works even while Win+L is taken over).
     Lock,
+    /// Open (or close) the app launcher.
+    Launcher,
     Reload,
     TogglePause,
     Exit,
@@ -78,6 +80,41 @@ impl fmt::Display for DesktopTarget {
     }
 }
 
+/// Every dispatcher, with a hint for its argument (empty if it takes none).
+pub const DISPATCHERS: &[(&str, &str)] = &[
+    ("exec", "<command line>"),
+    ("focusorexec", "<command line>"),
+    ("killactive", ""),
+    ("togglefloating", ""),
+    ("fullscreen", ""),
+    ("movefocus", "<l|r|u|d>"),
+    ("movewindow", "<l|r|u|d>"),
+    ("resizeactive", "<dx> <dy>"),
+    ("swapwithmaster", ""),
+    ("cyclenext", ""),
+    ("cycleprev", ""),
+    ("togglesplit", ""),
+    ("workspace", "<1-255>"),
+    ("movetoworkspace", "<1-255>"),
+    ("movetoworkspacesilent", "<1-255>"),
+    ("focusmonitor", "<l|r|u|d>"),
+    ("layout", "<dwindle|master|monocle|scrolling|even>"),
+    ("cyclelayout", ""),
+    ("scroller_proportion", "<0.05-1.0>"),
+    ("cycleproportion", ""),
+    ("consumewindow", "<l|r>"),
+    ("expelwindow", ""),
+    ("centercolumn", ""),
+    ("desktop", "<n|next|prev>"),
+    ("movetodesktop", "<n|next|prev>"),
+    ("pin", ""),
+    ("lock", ""),
+    ("launcher", ""),
+    ("reload", ""),
+    ("togglepause", ""),
+    ("exit", ""),
+];
+
 impl Command {
     /// Works with tiling off or paused, since it doesn't need the window manager.
     pub const fn works_while_paused(&self) -> bool {
@@ -88,6 +125,7 @@ impl Command {
                 | Self::KillActive
                 | Self::Desktop(_)
                 | Self::Lock
+                | Self::Launcher
                 | Self::Reload
                 | Self::TogglePause
                 | Self::Exit
@@ -195,6 +233,7 @@ impl FromStr for Command {
             "movetodesktop" => Self::MoveToDesktop(parse_desktop(n, rest)?),
             "pin" => Self::Pin,
             "lock" => Self::Lock,
+            "launcher" => Self::Launcher,
             "reload" => Self::Reload,
             "togglepause" => Self::TogglePause,
             "exit" => Self::Exit,
@@ -244,6 +283,7 @@ impl fmt::Display for Command {
             Self::MoveToDesktop(t) => write!(f, "movetodesktop {t}"),
             Self::Pin => f.write_str("pin"),
             Self::Lock => f.write_str("lock"),
+            Self::Launcher => f.write_str("launcher"),
             Self::Reload => f.write_str("reload"),
             Self::TogglePause => f.write_str("togglepause"),
             Self::Exit => f.write_str("exit"),
@@ -272,10 +312,23 @@ mod tests {
             "movetodesktop next",
             "pin",
             "lock",
+            "launcher",
             "cyclenext",
         ] {
             let cmd: Command = input.parse().unwrap();
             assert_eq!(cmd.to_string(), input);
+        }
+    }
+
+    #[test]
+    fn dispatcher_list_matches_the_parser() {
+        for (name, args) in DISPATCHERS {
+            let parsed = name.parse::<Command>();
+            if args.is_empty() {
+                assert!(parsed.is_ok(), "{name}");
+            } else {
+                assert!(matches!(parsed, Err(ParseError::MissingArg(..))), "{name}");
+            }
         }
     }
 

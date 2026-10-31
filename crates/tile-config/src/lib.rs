@@ -15,7 +15,8 @@ use std::{
 pub use keys::{Keybind, Modifiers};
 pub use rules::{RuleOutcome, Rules};
 pub use schema::{
-    Animations, Color, Config, Cursor, General, Remap, Rule, Tray, default_binds, program,
+    Animations, Color, Config, Corners, Cursor, General, Launcher, Remap, Rule, SearchPosition,
+    Tray, default_binds, program,
 };
 pub use watch::watch;
 
@@ -33,6 +34,8 @@ pub enum ConfigError {
     Rule(usize, String),
     #[error("remap: {}", .0.join("; "))]
     Remap(Vec<String>),
+    #[error("launcher.hide: {0}")]
+    LauncherHide(String),
 }
 
 /// A validated configuration, ready to use.
@@ -44,6 +47,8 @@ pub struct Loaded {
     pub rules: Rules,
     /// `remap`, compiled for the remapping engine.
     pub remap: tile_remap::Config,
+    /// `launcher.hide`, compiled.
+    pub launcher_hide: regex::RegexSet,
 }
 
 impl Loaded {
@@ -96,11 +101,16 @@ impl Loaded {
         }
         let rules = Rules::compile(&config.rules)?;
         let remap = remap::compile(&config.remap).map_err(ConfigError::Remap)?;
+        let launcher_hide = regex::RegexSetBuilder::new(&config.launcher.hide)
+            .case_insensitive(true)
+            .build()
+            .map_err(|e| ConfigError::LauncherHide(e.to_string()))?;
         Ok(Self {
             config,
             binds,
             rules,
             remap,
+            launcher_hide,
         })
     }
 
@@ -237,6 +247,28 @@ pub fn write_tray(path: &Path, tray: &Tray) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn placeholder_follows_the_settings() {
+        let mut launcher = Launcher::default();
+        let mut check = |calculator: bool, prefix: &str, expected: &str| {
+            launcher.calculator = calculator;
+            launcher.command_prefix = prefix.into();
+            assert_eq!(launcher.placeholder_text(), expected);
+        };
+        check(true, "!", "Search apps or equations, ! for commands");
+        check(true, ">", "Search apps or equations, > for commands");
+        check(true, "", "Search apps or equations");
+        check(false, "!", "Search apps, ! for commands");
+        check(false, "", "Search apps");
+
+        let custom = Launcher {
+            command_prefix: ";".into(),
+            placeholder: "Find ({prefix} runs)".into(),
+            ..Launcher::default()
+        };
+        assert_eq!(custom.placeholder_text(), "Find (; runs)");
+    }
 
     #[test]
     fn built_in_defaults_are_valid() {

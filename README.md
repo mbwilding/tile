@@ -18,6 +18,8 @@ menu is suppressed), so no separate hotkey program is needed.
   resize the split
 - Binds that start or focus a program (`Win+B` a new Chrome window, `Win+T` a new Windows
   Terminal window), and `Win+Q` to close, working even with tiling off
+- An app launcher: fuzzy search over everything Start lists, with icons, that also runs command
+  lines and Tile dispatchers
 - Coloured focus borders (Windows 11) and eased move/resize animations
 - Optional title bar removal for tiled windows, with per-app overrides
 - Key remapping in keyd's terms: layers, modifier layers, `overload()`, `overloadt()` and key
@@ -31,8 +33,8 @@ menu is suppressed), so no separate hotkey program is needed.
 ## Quickstart
 
 ```powershell
-cargo build --release --workspace    # builds tile.exe and tilectl.exe
-.\target\release\tilectl install     # install and start Tile (one UAC prompt)
+cargo release   # build tile.exe and tilectl.exe
+cargo deploy    # install and start Tile (one UAC prompt)
 ```
 
 Tile starts tiling straight away. Tick **Remap** in the tray icon to remap keys, and untick
@@ -65,10 +67,10 @@ without a UAC prompt at sign-in:
 It replaces a running Tile and asks for admin rights once. It also stops and removes the
 standalone Key remapper (`C:\Program Files\Key`, its sign-in task and `PATH` entry) if that is
 installed, since Tile remaps keys itself now; Key's config in `%APPDATA%\Key` is left alone. To
-update after a rebuild, run `tilectl install` again from the checkout: the installed `tilectl`
-installs the build in `.\target\release`. Running programs never block an update, since the old
-files are moved aside and deleted on the next install. `tilectl uninstall` stops Tile and undoes
-all of that, keeping your config and logs.
+update, run `cargo release` and `cargo deploy` again (or `tilectl install` from the checkout: the
+installed `tilectl` installs the build in `.\target\release`). Running programs never block an
+update, since the old files are moved aside and deleted on the next install. `tilectl uninstall`
+stops Tile and undoes all of that, keeping your config and logs.
 
 To try a build without installing:
 
@@ -98,6 +100,7 @@ config to copy and paste, and [`examples/`](examples) has complete configs to st
 | [Layouts](docs/layouts.md) | The five layouts, portrait and multi-monitor behaviour |
 | [Window rules](docs/window-rules.md) | Float, ignore or place windows by program, class or title |
 | [Key remapping](docs/key-remapping.md) | keyd-style layers, overloads and their limits |
+| [Launcher](docs/launcher.md) | The app launcher: searching, keys, launch history |
 | [tilectl](docs/tilectl.md) | The command-line tool and the IPC pipe |
 | [Windows integration](docs/windows-integration.md) | Tray, files, Win+L, admin windows, what gets undone |
 | [Development](docs/development.md) | Crates, building, testing and the documentation rules |
