@@ -32,7 +32,7 @@ enum Cmd {
     Subscribe,
     /// Reload the config file.
     Reload,
-    /// Check a config file (default: %APPDATA%\Tile\config.toml) and print what is wrong.
+    /// Check a config file (default: %APPDATA%\Tile\config.yml) and print what is wrong.
     Check { file: Option<PathBuf> },
     /// Print the config file's path.
     Config,

@@ -76,7 +76,7 @@ struct Daemon {
     paused: bool,
     /// The key remapper is paused (tray "Key").
     remap_paused: bool,
-    /// The `[hotkeys]` are paused (tray "Hotkey").
+    /// The `hotkeys` are paused (tray "Hotkey").
     hotkey_paused: bool,
     quit: bool,
     /// The window manager is on (`general.tiling`).
@@ -675,7 +675,7 @@ impl Daemon {
         }
     }
 
-    /// Runs the `[hotkeys]` entry the hook matched, by its place among the installed keys.
+    /// Runs the `hotkeys` entry the hook matched, by its place among the installed keys.
     fn run_hotkey(&mut self, index: usize) {
         let win_l = self.win_l_available();
         let Some((_, action)) = self

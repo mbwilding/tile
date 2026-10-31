@@ -36,7 +36,7 @@ pub enum HotkeyEvent {
     /// A key that is neither a bind nor a lone modifier went down, while typing is reported
     /// ([`Hotkeys::set_report_typing`]).
     Typed,
-    /// The `[hotkeys]` entry with this index was pressed (and swallowed).
+    /// The `hotkeys` entry with this index was pressed (and swallowed).
     Hotkey(usize),
 }
 
@@ -60,7 +60,7 @@ struct Binding {
 #[derive(Clone)]
 pub struct Hotkeys {
     table: Arc<RwLock<Vec<Binding>>>,
-    /// The `[hotkeys]` table, switched on and off apart from the binds.
+    /// The `hotkeys` section, switched on and off apart from the binds.
     extra: Arc<RwLock<Vec<Binding>>>,
     extra_paused: Arc<AtomicBool>,
     paused: Arc<AtomicBool>,
@@ -250,7 +250,7 @@ impl Hotkeys {
         errors
     }
 
-    /// Replaces the `[hotkeys]` table. Returns a message for every key that isn't recognised.
+    /// Replaces the `hotkeys` section. Returns a message for every key that isn't recognised.
     pub fn set_hotkeys(&self, keys: &[Keybind]) -> Vec<String> {
         let mut errors = Vec::new();
         let table = keys

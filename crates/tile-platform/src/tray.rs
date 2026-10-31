@@ -22,7 +22,7 @@ pub enum TrayEvent {
     ToggleTile,
     /// Pause or resume the key remapper.
     ToggleKey,
-    /// Pause or resume the `[hotkeys]`.
+    /// Pause or resume the `hotkeys`.
     ToggleHotkey,
     ToggleLogging,
     Reload,
@@ -79,7 +79,7 @@ struct Items {
     tile: CheckMenuItem,
     /// Checked while the key remapper runs (not paused).
     key: CheckMenuItem,
-    /// Checked while the `[hotkeys]` run (not paused).
+    /// Checked while the `hotkeys` run (not paused).
     hotkey: CheckMenuItem,
     logging: CheckMenuItem,
     reload: MenuId,

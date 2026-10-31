@@ -1,4 +1,4 @@
-//! The `[remap]` table: keyd's layers and actions, compiled for the remapping engine.
+//! The `remap` section: keyd's layers and actions, compiled for the remapping engine.
 
 use tile_remap::{Action, Chord, Config, Key, Layer, LayerId, Mods, shifted};
 
@@ -145,7 +145,7 @@ fn parse_action(config: &Config, text: &str) -> Result<Action, String> {
     }
 }
 
-/// Compiles `[remap]` for the engine, or lists everything wrong with it.
+/// Compiles `remap` for the engine, or lists everything wrong with it.
 pub fn compile(remap: &Remap) -> Result<Config, Vec<String>> {
     let mut config = Config {
         modifier_guard: remap.modifier_guard,
@@ -201,26 +201,25 @@ mod tests {
         Key::from_name(name).unwrap()
     }
 
-    fn compile_toml(text: &str) -> Result<Config, Vec<String>> {
-        compile(&toml::from_str(text).unwrap())
+    fn compile_yaml(text: &str) -> Result<Config, Vec<String>> {
+        compile(&serde_yaml_ng::from_str(text).unwrap())
     }
 
     #[test]
     fn layers_and_actions() {
-        let config = compile_toml(
+        let config = compile_yaml(
             r#"
-            [layers.main]
-            capslock = "overload(nav, esc)"
-            a = "overloadt(control, a, 200)"
-            "=" = "C-S-x"
-            x = "!"
-
-            [layers."nav:C-A"]
-            h = "left"
-
-            [layers."nav+shift"]
-            h = "noop"
-            "#,
+layers:
+  main:
+    capslock: overload(nav, esc)
+    a: overloadt(control, a, 200)
+    "=": C-S-x
+    x: "!"
+  "nav:C-A":
+    h: left
+  nav+shift:
+    h: noop
+"#,
         )
         .unwrap();
         let main = &config.layers[tile_remap::MAIN].binds;
@@ -266,23 +265,21 @@ mod tests {
 
     #[test]
     fn reports_every_problem() {
-        let errors = compile_toml(
+        let errors = compile_yaml(
             r#"
-            modifier_guard = false
-
-            [layers.main]
-            nope = "a"
-            b = "nope"
-            c = "layer(missing)"
-            d = "oneshot(shift)"
-            e = "f"
-
-            [layers."x:Q"]
-            g = "h"
-
-            [layers."y+missing"]
-            g = "h"
-            "#,
+modifier_guard: false
+layers:
+  main:
+    nope: a
+    b: nope
+    c: layer(missing)
+    d: oneshot(shift)
+    e: f
+  "x:Q":
+    g: h
+  y+missing:
+    g: h
+"#,
         )
         .unwrap_err();
         assert_eq!(errors.len(), 6, "{errors:#?}");
@@ -291,9 +288,9 @@ mod tests {
 
     #[test]
     fn modifier_guard() {
-        assert!(compile_toml("").unwrap().modifier_guard);
+        assert!(compile_yaml("{}").unwrap().modifier_guard);
         assert!(
-            !compile_toml("modifier_guard = false")
+            !compile_yaml("modifier_guard: false")
                 .unwrap()
                 .modifier_guard
         );

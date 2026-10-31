@@ -3,7 +3,7 @@
 Each workspace has its own layout. Set the default for new workspaces with `general.layout`,
 change the current one with the `layout <name>` and `cyclelayout` dispatchers (`Win+Space`), and
 the windows keep their order when you switch. Options are in
-[configuration](configuration.md#layout-tables).
+[configuration](configuration.md#layout-sections).
 
 | Layout | Description |
 | --- | --- |
@@ -22,13 +22,13 @@ workspace you set to another layout stays on it until the monitor is rotated.
 
 ## Workspaces and monitors
 
-By default every monitor has workspaces of its own (`general.independent_workspaces = true`).
+By default every monitor has workspaces of its own (`general.independent_workspaces: true`).
 `workspace 2` shows workspace 2 *of the monitor you are on*, so it never jumps to another monitor,
 and each monitor has its own workspace 2 with its own windows and layout. `movetoworkspace 2`
 likewise sends the window to workspace 2 of its monitor. Moving a window to another monitor puts
 it on the workspace that monitor is showing.
 
-Set `independent_workspaces = false` to sync the monitors instead: switching to workspace 2
+Set `independent_workspaces: false` to sync the monitors instead: switching to workspace 2
 switches every monitor to its own workspace 2 at once.
 
 Switching to an empty workspace keeps focus on that monitor: with no window to focus, Tile
