@@ -44,28 +44,27 @@ pub enum Hotkey {
     Close { close: bool },
 }
 
-/// The command line of a [`Hotkey::App`]: one, or a list where the first whose program is
-/// installed runs, like `["wtd.exe", "wt.exe"]`.
+/// The command line of a [`Hotkey::App`]: one, or a list started one after another, like
+/// `["wt.exe", "notepad.exe"]`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Run {
     One(String),
-    FirstOf(Vec<String>),
+    All(Vec<String>),
 }
 
 impl Run {
-    /// The command lines in the order they are tried.
+    /// The command lines in the order they run.
     pub fn commands(&self) -> &[String] {
         match self {
             Self::One(command) => std::slice::from_ref(command),
-            Self::FirstOf(commands) => commands,
+            Self::All(commands) => commands,
         }
     }
 }
 
 impl Hotkey {
-    /// The command lines to try in order, the first whose program is installed running.
-    /// Empty for [`Hotkey::Close`].
+    /// The command lines to run in order. Empty for [`Hotkey::Close`].
     pub fn commands(&self) -> &[String] {
         match self {
             Self::Run(run) => std::slice::from_ref(run),
@@ -74,17 +73,19 @@ impl Hotkey {
         }
     }
 
-    /// The process whose window to focus rather than starting `command` (one of
-    /// [`Hotkey::commands`]) again.
-    pub fn exe(&self, command: &str) -> Option<String> {
+    /// The process whose window to focus rather than running the commands again: `exe`, or
+    /// else the program of the first command.
+    pub fn exe(&self) -> Option<String> {
         match self {
             Self::Run(_)
             | Self::App {
                 exe: None,
                 focus: true,
                 ..
-            } => Path::new(program(command))
-                .file_name()
+            } => self
+                .commands()
+                .first()
+                .and_then(|c| Path::new(program(c)).file_name())
                 .map(|n| n.to_string_lossy().into_owned()),
             Self::App { focus: false, .. } | Self::Close { .. } => None,
             Self::App { exe, .. } => exe.clone(),
@@ -122,7 +123,7 @@ fn default_hotkeys() -> BTreeMap<String, Hotkey> {
         (
             "super+t".to_string(),
             Hotkey::App {
-                run: Run::FirstOf(vec!["wtd.exe -w new".into(), "wt.exe -w new".into()]),
+                run: Run::One("wt.exe -w new".into()),
                 exe: None,
                 focus: false,
             },
@@ -185,15 +186,7 @@ fn default_binds() -> BTreeMap<String, String> {
         .iter()
         .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
         .collect();
-    // Workspaces 1-5 on the Dvorak home row, like the Hyprland setup; 6 and 7 on their digits.
-    for (n, key) in (1..).zip(["h", "t", "n", "s", "minus"]) {
-        binds.insert(format!("super+ctrl+{key}"), format!("workspace {n}"));
-        binds.insert(
-            format!("super+ctrl+shift+{key}"),
-            format!("movetoworkspace {n}"),
-        );
-    }
-    for n in 6..=7 {
+    for n in 1..=9 {
         binds.insert(format!("super+{n}"), format!("workspace {n}"));
         binds.insert(format!("super+shift+{n}"), format!("movetoworkspace {n}"));
     }
@@ -444,90 +437,11 @@ pub struct Remap {
     pub layers: BTreeMap<String, BTreeMap<String, String>>,
 }
 
-/// Remapping layers used when the config has no `[remap.layers]`: nona's keyd setup (the
-/// `keyd-dvorak` module in the nix repo), so the keyboard behaves the same on Linux. Its
-/// `rightalt = layer(symbols)` waits for a port of the `symbols` layer.
-const DEFAULT_LAYERS: &[(&str, &[(&str, &str)])] = &[
-    (
-        "main",
-        &[
-            ("backspace", "noop"),
-            ("space", "overload(shift, space)"),
-            ("capslock", "overload(capslock, backspace)"),
-            ("leftshift", "esc"),
-            ("a", "overloadt(control, a, 200)"),
-            (";", "overloadt(control, ;, 200)"),
-            ("s", "overloadt(meta, s, 200)"),
-            ("l", "overloadt(meta, l, 200)"),
-            ("z", "overloadt(alt, z, 200)"),
-            ("/", "overloadt(alt, /, 200)"),
-            ("f", "overloadt(numbers, f, 200)"),
-            ("m", "overloadt(fkeys, m, 200)"),
-        ],
-    ),
-    // With the Windows Dvorak layout, j c v p are Dvorak's h j k l.
-    (
-        "capslock:C",
-        &[("j", "left"), ("c", "down"), ("v", "up"), ("p", "right")],
-    ),
-    (
-        "capslock+shift",
-        &[
-            ("j", "C-left"),
-            ("c", "C-down"),
-            ("v", "C-up"),
-            ("p", "C-right"),
-        ],
-    ),
-    (
-        "numbers",
-        &[
-            (";", "0"),
-            ("m", "1"),
-            (",", "2"),
-            (".", "3"),
-            ("j", "4"),
-            ("k", "5"),
-            ("l", "6"),
-            ("u", "7"),
-            ("i", "8"),
-            ("o", "9"),
-        ],
-    ),
-    (
-        "fkeys",
-        &[
-            ("q", "f1"),
-            ("w", "f2"),
-            ("e", "f3"),
-            ("r", "f4"),
-            ("a", "f5"),
-            ("s", "f6"),
-            ("d", "f7"),
-            ("f", "f8"),
-            ("z", "f9"),
-            ("x", "f10"),
-            ("c", "f11"),
-            ("v", "f12"),
-        ],
-    ),
-];
-
 impl Default for Remap {
     fn default() -> Self {
-        let layers = DEFAULT_LAYERS
-            .iter()
-            .map(|(name, binds)| {
-                let binds = binds
-                    .iter()
-                    .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
-                    .collect();
-                ((*name).to_string(), binds)
-            })
-            .collect();
         Self {
             modifier_guard: true,
-            layers,
+            layers: BTreeMap::new(),
         }
     }
 }

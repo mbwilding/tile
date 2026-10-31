@@ -6,9 +6,8 @@ off). The remapper has its own keyboard hook in front of the keybinds, so binds 
 remapped.
 
 `[remap.layers]` holds keyd's config as TOML: each table is a keyd section, named like keyd's
-section header (quoted when it has `:` or `+`), and maps keys to actions. Writing any
-`[remap.layers]` replaces the built-in layers, which are nona's keyd setup, so the same keyboard
-works on Linux and Windows. They are in the [default config](configuration.md#the-default-config).
+section header (quoted when it has `:` or `+`), and maps keys to actions. There are no layers by
+default, so the remapper changes nothing until you add some.
 
 ```toml
 [remap.layers.main]
@@ -39,8 +38,8 @@ through untouched.
 
 Keys are physical positions named after the US QWERTY layout (keyd's names: `a`, `;`, `/`,
 `leftshift`, `capslock`, `esc`, `f1`…), not characters, and Windows' keyboard layout applies to
-what Tile sends. With the Windows Dvorak layout, the default `capslock` layer's `j c v p` are
-Dvorak's `h j k l`, as on nona. Built-in layers: `control`, `shift`, `alt`, `meta` and `altgr`.
+what Tile sends: with the Windows Dvorak layout, the key named `j` types `h`. Built-in layers:
+`control`, `shift`, `alt`, `meta` and `altgr`.
 Modifier letters: `C`, `S`, `A`, `M` (Win) and `G` (AltGr).
 
 `modifier_guard` (on by default) stops a layer's lone Alt or Win press opening a menu or Start.

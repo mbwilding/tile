@@ -58,8 +58,7 @@ installed Tile runs as administrator, so it manages them like any other window. 
 hand without admin rights (e.g. `cargo run`) leaves them alone, and its keybinds and remapping
 don't work while one has focus. Programs Tile starts (`exec` binds and `[hotkeys]`) go through a
 launcher running with your normal rights, so they don't run as administrator. A `[hotkeys]` entry
-with a list of commands runs the first whose program Windows can find: on `PATH` (app execution
-aliases like `wt.exe` included) or registered under App Paths (like `chrome.exe`).
+with a list of commands starts them all in order, without waiting for any to finish.
 
 ## Secure desktops
 

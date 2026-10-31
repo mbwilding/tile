@@ -693,20 +693,12 @@ impl Daemon {
             }
             return;
         }
-        let commands = action.commands();
-        let Some(run) = commands
-            .iter()
-            .find(|c| tile_platform::installed(tile_config::program(c)))
-            .or(commands.last())
-        else {
-            return;
-        };
-        let (run, exe) = (run.clone(), action.exe(run));
-        self.launch_or_focus(&run, exe);
+        let (commands, exe) = (action.commands().to_vec(), action.exe());
+        self.launch_or_focus(&commands, exe);
     }
 
-    /// Focuses a window of the process `exe` if there is one, otherwise starts `run`.
-    fn launch_or_focus(&mut self, run: &str, exe: Option<String>) {
+    /// Focuses a window of the process `exe` if there is one, otherwise runs `commands` in order.
+    fn launch_or_focus(&mut self, commands: &[String], exe: Option<String>) {
         if let Some(exe) = exe {
             let current = self.desktops.current_id();
             let focused = self.focused();
@@ -741,7 +733,7 @@ impl Daemon {
                 return;
             }
         }
-        launch::exec(run);
+        launch::exec_all(commands);
     }
 
     /// Takes over or gives back Win+L to match `general.override_win_l` (while tiling).

@@ -114,8 +114,8 @@ fn build(checks: &Checks) -> Result<(TrayIcon, Items), String> {
     let menu = Menu::new();
     menu.append_items(&[
         &tile,
-        &key,
         &hotkey,
+        &key,
         &PredefinedMenuItem::separator(),
         &reload,
         &open_config,
